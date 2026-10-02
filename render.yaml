@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: ig-satis-botu
+    runtime: node
+    plan: starter # free planda servis uyur, Meta webhook'ları kaçabilir. Starter öneriyoruz.
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: IG_VERIFY_TOKEN
+        sync: false
+      - key: IG_APP_SECRET
+        sync: false
+      - key: IG_ACCESS_TOKEN
+        sync: false
+      - key: IG_ACCOUNT_ID
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PRODUCT_FEED_URL
+        sync: false
+      - key: SITE_INFO_URLS
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: STORE_NAME
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-sonnet-5-5
