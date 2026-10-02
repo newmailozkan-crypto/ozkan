@@ -14,6 +14,21 @@ let byId = new Map();
 let lastUpdated = null;
 let lastError = null;
 
+// ---------- renk / model anahtarı ----------
+const COLOR_WORDS = new Set([
+  'siyah', 'beyaz', 'gri', 'lacivert', 'kahverengi', 'taba', 'bej', 'krem', 'kirmizi', 'mavi', 'yesil', 'sari',
+  'pembe', 'mor', 'turuncu', 'bordo', 'antrasit', 'haki', 'ten', 'buz', 'fume', 'camel', 'gold', 'gumus', 'altin',
+  'petrol', 'mint', 'lila', 'ekru', 'vizon', 'nude', 'navy', 'black', 'white', 'grey', 'gray', 'brown', 'red', 'blue', 'green',
+]);
+const asciiTokens = (s) =>
+  String(s || '')
+    .toLocaleLowerCase('tr')
+    .replace(/ç/g, 'c').replace(/ğ/g, 'g').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ş/g, 's').replace(/ü/g, 'u')
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+const detectColor = (title) => asciiTokens(title).find((t) => COLOR_WORDS.has(t)) || '';
+const stripColors = (title) => asciiTokens(title).filter((t) => !COLOR_WORDS.has(t)).join(' ');
+
 // ---------- yardımcılar ----------
 const toArray = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
 const lower = (o) =>
@@ -166,13 +181,22 @@ function normalize(rawIn) {
     inStock = q != null ? q > 0 : availFlag !== false;
   }
 
+  const brand = text(pick(raw, ['brand', 'marka', 'manufacturer']));
+  const color = text(pick(raw, ['color', 'renk'])) || detectColor(title);
+  const modelCode = text(pick(raw, ['model', 'modelcode', 'model_code', 'mpn', 'modelkodu']));
+  // Aynı modelin farklı renklerini bağlayan anahtar: model kodu varsa o, yoksa renk kelimeleri çıkarılmış başlık
+  const modelKey = asciiTokens(modelCode || `${brand} ${stripColors(title)}`).join(' ') || String(id || title);
+  const groupId = text(pick(raw, ['item_group_id', 'group_id', 'groupid', 'parentid', 'parent_id'])) || null;
+
   return {
     id: id || title,
-    groupId: text(pick(raw, ['item_group_id', 'group_id', 'groupid', 'parentid', 'parent_id', 'modelcode', 'model'])) || null,
+    groupId,
+    groupKey: groupId ? `${groupId}|${asciiTokens(color).join('')}` : null, // aynı renk + farklı beden satırlarını birleştirir
+    modelKey,
     title,
-    brand: text(pick(raw, ['brand', 'marka', 'manufacturer'])),
+    brand,
     category: text(pick(raw, ['product_type', 'category', 'kategori', 'categorypath', 'google_product_category'])),
-    color: text(pick(raw, ['color', 'renk'])),
+    color,
     description: stripHtml(pick(raw, ['description', 'aciklama', 'açıklama', 'detail', 'detay', 'content'])).slice(0, 600),
     price,
     priceOriginal: priceNormal && price && priceNormal > price ? priceNormal : null,
@@ -189,13 +213,14 @@ function groupVariants(list) {
   const groups = new Map();
   const out = [];
   for (const p of list) {
-    if (!p.groupId) {
+    if (!p.groupKey) {
       out.push(p);
       continue;
     }
-    const g = groups.get(p.groupId);
+    const g = groups.get(p.groupKey);
     if (!g) {
-      groups.set(p.groupId, { ...p, id: p.groupId });
+      const slug = asciiTokens(p.color).join('');
+      groups.set(p.groupKey, { ...p, sizes: [...p.sizes], id: slug ? `${p.groupId}-${slug}` : p.groupId });
     } else {
       for (const s of p.sizes) {
         if (!g.sizes.find((x) => x.size === s.size)) g.sizes.push(s);
@@ -244,6 +269,12 @@ export function catalogStatus() {
   return { count: products.length, lastUpdated, lastError };
 }
 
+// Test amaçlı: listeyi doğrudan yükle
+export function setProducts(list) {
+  products = list;
+  byId = new Map(list.map((p) => [String(p.id), p]));
+}
+
 // ---------- sorgular ----------
 const norm = (s) =>
   String(s || '')
@@ -288,6 +319,30 @@ export function searchProducts({ query = '', size, maxPrice, limit = 8, excludeI
   }
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit).map((x) => x.p);
+}
+
+// Aynı modelin (aynı model anahtarı) diğer renkleri; size verilirse sadece o numarası stokta olanlar
+export function otherColors(p, size) {
+  return products.filter(
+    (x) => x.id !== p.id && x.modelKey === p.modelKey && x.inStock && hasSize(x, size) && x.color.toLowerCase() !== p.color.toLowerCase()
+  );
+}
+
+// Metin tabanlı benzerlik: kategori, marka, başlık kelimeleri ve fiyat yakınlığı
+export function similarProducts(p, size, limit = 6) {
+  const base = new Set(asciiTokens(stripColors(p.title)));
+  const scored = [];
+  for (const x of products) {
+    if (x.id === p.id || x.modelKey === p.modelKey || !x.inStock || !hasSize(x, size)) continue;
+    let score = 0;
+    if (p.category && x.category && norm(x.category) === norm(p.category)) score += 3;
+    if (p.brand && x.brand && norm(x.brand) === norm(p.brand)) score += 2;
+    for (const t of asciiTokens(stripColors(x.title))) if (base.has(t)) score += 1;
+    if (p.price && Math.abs(x.price - p.price) / p.price <= 0.3) score += 1;
+    if (score > 0) scored.push({ x, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit).map((s) => s.x);
 }
 
 export function suggestForSize(size, excludeIds = [], count = 8, preferCategory = '') {

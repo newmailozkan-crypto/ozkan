@@ -59,7 +59,12 @@ function staticPrompt() {
 - Stokta olmayan/bedeni olmayan ürünü ASLA satmaya çalışma; alternatif öner.
 
 ## SATIŞ AKIŞI
-1. Müşteri ürün sorarsa veya görsel gönderirse: önce ürünü bul (görsel varsa match_customer_image). Bulunca send_product_photos ile fotoğrafı gönder, ardından fiyat, öne çıkan özellikler ve stokta olan bedenleri yaz.
+1. Müşteri ürün görseli gönderirse: match_customer_image çağır (numarayı biliyorsan size ver, bilmiyorsan önce nazikçe numarasını sor). Sonuç durumuna göre ilerle:
+   - "stokta": ürün fotoğrafını send_product_photos ile gönder, fiyat ve öne çıkan özellikleri yaz, siparişe yönlendir.
+   - "eslesti_beden_sorulmali": ürünü bulduğunu söyle, numarasını sor; cevap gelince find_alternatives ile kontrol et.
+   - "beden_yok_diger_renk_var": müşterinin ürününde o numara kalmadığını söyle, AYNI modelin o numarası stokta olan diğer renklerini fotoğraflarıyla öner.
+   - "model_bedeni_yok_benzerler_var" veya "katalogda_yok": dürüstçe söyle (bu ürün/numara yok), görsele en benzeyen stoklu modelleri fotoğraflarıyla öner ve beğendiği var mı diye sor.
+   Müşteri ürünü metinle söylerse search_products ile bul, numarasını öğren, find_alternatives ile aynı mantığı uygula. Alternatif sunarken sadece araçtan dönen ürünleri kullan; asla uydurma.
 2. Numarasını/bedenini erken öğren. Sadece numarası stokta olan ürünleri öner (search_products size parametresiyle).
 3. Güven ver ve kapat: "Beden X stokta, isterseniz hemen siparişinizi oluşturayım" gibi yönlendir.
 4. Müşteri almaya karar verince sipariş bilgilerini topla (tek tek, doğal sohbetle): isim soyisim, telefon, açık adres (mahalle, sokak, bina/daire no), il, ilçe ve hangi ürün/beden.
@@ -109,8 +114,23 @@ const TOOLS = [
   },
   {
     name: 'match_customer_image',
-    description: 'Müşterinin son gönderdiği görseli analiz edip katalogdaki en yakın ürünlerle eşleştirir. Müşteri görsel gönderdiğinde kullan.',
-    input_schema: { type: 'object', properties: { hint: { type: 'string', description: 'Müşterinin görselle birlikte yazdığı not (varsa)' } } },
+    description: "Müşterinin son gönderdiği görseli analiz edip katalogla eşleştirir ve stok akışını uygular: numara stokta mı -> değilse aynı modelin diğer renkleri -> değilse en benzer modeller. Müşteri görsel gönderdiğinde MUTLAKA kullan. Numarayı biliyorsan size ver (müşteri görselle birlikte numara yazdıysa); bilmiyorsan boş bırak, sonuç 'eslesti_beden_sorulmali' döner.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        size: { type: 'string', description: 'Müşterinin istediği ayakkabı numarası (biliniyorsa)' },
+        hint: { type: 'string', description: 'Müşterinin görselle birlikte yazdığı not (varsa)' },
+      },
+    },
+  },
+  {
+    name: 'find_alternatives',
+    description: "Bir ürünün istenen numarası stokta mı kontrol eder; yoksa aynı modelin numarası stokta olan diğer renklerini, o da yoksa benzer modelleri döner. Müşteri modeli metinle söylediğinde veya görselden sonra numara öğrenildiğinde kullan.",
+    input_schema: {
+      type: 'object',
+      properties: { product_id: { type: 'string' }, size: { type: 'string' } },
+      required: ['product_id', 'size'],
+    },
   },
   {
     name: 'send_product_photos',
@@ -193,72 +213,145 @@ function extractJson(s) {
 const textOf = (resp) => resp.content.filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
 
 // ---------- görsel eşleştirme ----------
-async function matchImage(session, hint) {
-  if (!session.lastImage) return { hata: 'Müşterinin gönderdiği bir görsel yok.' };
-  const img = { type: 'image', source: { type: 'base64', media_type: session.lastImage.mediaType, data: session.lastImage.b64 } };
+const imgBlock = (s) => ({ type: 'image', source: { type: 'base64', media_type: s.lastImage.mediaType, data: s.lastImage.b64 } });
+
+// Müşteri görseli ile aday ürün görsellerini karşılaştırıp en yakınları sıralar
+async function rankByVision(session, cands, instruction) {
+  const withImg = cands.filter((c) => c.images.length).slice(0, 10);
+  if (!withImg.length) return [];
+  try {
+    const content = [{ type: 'text', text: 'MÜŞTERİNİN GÖRSELİ:' }, imgBlock(session), { type: 'text', text: 'ADAY ÜRÜNLER:' }];
+    for (const c of withImg) {
+      content.push({ type: 'text', text: `Aday id=${c.id} | ${c.title} | renk: ${c.color || '-'}` });
+      content.push({ type: 'image', source: { type: 'url', url: c.images[0] } });
+    }
+    content.push({ type: 'text', text: `${instruction} Yalnızca JSON: {"eslesmeler":[{"id":"","guven":0.0-1.0,"neden":""}]}. Hiçbiri benzemiyorsa boş liste.` });
+    const r = await client.messages.create({ model: cfg.visionModel, max_tokens: 600, messages: [{ role: 'user', content }] });
+    const j = extractJson(textOf(r));
+    return (j?.eslesmeler || [])
+      .map((m) => ({ p: catalog.getProduct(m.id), guven: Number(m.guven) || 0, neden: m.neden }))
+      .filter((x) => x.p);
+  } catch (e) {
+    console.error('[rankByVision] başarısız, metin benzerliğine düşülüyor:', e.message);
+    return null; // çağıran fallback uygular
+  }
+}
+
+// Akış: görseli tanı -> katalogda eşleştir -> numara stokta mı? -> değilse diğer renkler -> değilse benzer modeller
+async function matchImage(session, size, hint) {
+  if (!session.lastImage) return { durum: 'gorsel_yok', hata: 'Müşterinin gönderdiği bir görsel yok.' };
 
   // 1) görseli tanımla
   const r1 = await client.messages.create({
-    model: cfg.model,
+    model: cfg.visionModel,
     max_tokens: 400,
     messages: [
       {
         role: 'user',
         content: [
-          img,
+          imgBlock(session),
           {
             type: 'text',
-            text: `Bu ürün görselini tanımla (ayakkabı vb.). Yalnızca JSON döndür: {"anahtar_kelimeler":["..."],"tur":"","renk":"","marka_veya_yazi":"","stil":""}. Anahtar kelimeler Türkçe, katalogda aranabilir olsun (tür, renk, marka, model adı, taban/materyal). ${hint ? 'Müşteri notu: ' + hint : ''}`,
+            text: `Bu ürün görselini tanımla (ayakkabı vb.). Yalnızca JSON döndür: {"anahtar_kelimeler":["..."],"tur":"","renk":"","marka_veya_yazi":"","stil":""}. Anahtar kelimeler Türkçe, katalogda aranabilir olsun (tür, marka, model adı, taban/materyal). ${hint ? 'Müşteri notu: ' + hint : ''}`,
           },
         ],
       },
     ],
   });
   const d = extractJson(textOf(r1)) || {};
-  const kw = [...(d.anahtar_kelimeler || []), d.tur, d.renk, d.marka_veya_yazi].filter(Boolean).join(' ');
+  const kw = [...(d.anahtar_kelimeler || []), d.tur, d.marka_veya_yazi].filter(Boolean).join(' ');
 
-  // 2) aday ürünler: önce anahtar kelimeler, yetmezse kelimeleri tek tek dene
-  let cands = catalog.searchProducts({ query: kw, limit: 8, inStockOnly: false });
-  if (cands.length < 4) {
+  // 2) stok durumundan bağımsız adaylar (renk dahil)
+  let cands = catalog.searchProducts({ query: kw, limit: 10, inStockOnly: false });
+  if (cands.length < 5) {
     const seen = new Set(cands.map((c) => c.id));
-    for (const w of kw.split(/\s+/)) {
+    for (const w of kw.split(/\s+/).filter(Boolean)) {
       for (const p of catalog.searchProducts({ query: w, limit: 6, inStockOnly: false })) {
-        if (!seen.has(p.id) && cands.length < 8) {
+        if (!seen.has(p.id) && cands.length < 10) {
           seen.add(p.id);
           cands.push(p);
         }
       }
     }
   }
-  cands = cands.filter((c) => c.images.length).slice(0, 8);
-  if (!cands.length) return { tanim: d, eslesen_urunler: [], not: 'Katalogda yakın ürün bulunamadı. Müşteriden ürün adı/detay iste veya benzer ürünleri search_products ile ara.' };
 
-  // 3) müşteri görseli ile aday görselleri karşılaştır
-  try {
-    const content = [{ type: 'text', text: 'MÜŞTERİNİN GÖRSELİ:' }, img, { type: 'text', text: 'ADAY ÜRÜNLER:' }];
-    for (const c of cands) {
-      content.push({ type: 'text', text: `Aday id=${c.id} | ${c.title}` });
-      content.push({ type: 'image', source: { type: 'url', url: c.images[0] } });
+  // 3) görsel karşılaştırma: müşterinin ürünü katalogda var mı?
+  let ranked = await rankByVision(session, cands, 'Müşterinin görselindeki ürünle AYNI modeli (renk farkı olabilir) bul; birebir aynı olanlar en üstte, sonra aynı modelin başka renkleri.');
+  if (ranked === null) ranked = cands.slice(0, 4).map((p) => ({ p, guven: 0.4, neden: 'anahtar kelime benzerliği' }));
+  ranked = ranked.sort((a, b) => b.guven - a.guven);
+  const best = ranked[0];
+  const found = best && best.guven >= 0.6 ? best : null;
+
+  const out = { tanim: d, aranan_beden: size || null };
+
+  if (found) {
+    const p = found.p;
+    out.eslesen_urun = { ...catalog.brief(p, size), eslesme_guveni: found.guven };
+    // aynı modelin (aynı renkte olmasa da) görsel olarak eşleşen diğer renkleri
+    if (!size) {
+      out.durum = 'eslesti_beden_sorulmali';
+      out.not = 'Ürün katalogda bulundu. Müşteriden ayakkabı numarasını öğren, sonra find_alternatives veya get_product ile stok kontrolü yap. Fotoğrafı send_product_photos ile gönder.';
+      return out;
     }
-    content.push({
-      type: 'text',
-      text: 'Müşterinin görselindeki ürünle birebir aynı veya en yakın adayları sırala. Yalnızca JSON: {"eslesmeler":[{"id":"","guven":0.0-1.0,"neden":""}]}. Hiçbiri benzemiyorsa boş liste.',
-    });
-    const r2 = await client.messages.create({ model: cfg.model, max_tokens: 500, messages: [{ role: 'user', content }] });
-    const j = extractJson(textOf(r2));
-    const ranked = (j?.eslesmeler || [])
-      .map((m) => ({ p: catalog.getProduct(m.id), guven: m.guven, neden: m.neden }))
-      .filter((x) => x.p)
-      .slice(0, 4);
-    return {
-      tanim: d,
-      eslesen_urunler: ranked.map((x) => ({ ...catalog.brief(x.p), eslesme_guveni: x.guven, neden: x.neden })),
-      not: ranked.length ? 'Güveni düşükse (<0.6) müşteriye "buna benzer" diye sun ve teyit al.' : 'Birebir eşleşme yok; benzer ürünleri search_products ile göster.',
-    };
-  } catch (e) {
-    console.error('[matchImage] görsel karşılaştırma başarısız, anahtar kelime sonucu dönülüyor:', e.message);
-    return { tanim: d, eslesen_urunler: cands.slice(0, 4).map((p) => catalog.brief(p)), not: 'Görsel karşılaştırma yapılamadı; bu liste anahtar kelime benzerliğidir, müşteriden teyit al.' };
+    if (catalog.hasSize(p, size)) {
+      out.durum = 'stokta';
+      out.not = `${size} numara stokta. Ürün fotoğrafını gönder, fiyat/özellik ver ve siparişe yönlendir. Sipariş alırken 2+ ürüne teşvik et.`;
+      return out;
+    }
+    const colors = catalog.otherColors(p, size);
+    if (colors.length) {
+      out.durum = 'beden_yok_diger_renk_var';
+      out.diger_renkler = colors.slice(0, 5).map((c) => catalog.brief(c, size));
+      out.not = `Müşterinin ürününde ${size} numara tükenmiş. Aynı modelin ${size} numarası stokta olan diğer renklerini fotoğraflarıyla (send_product_photos) öner.`;
+      return out;
+    }
+    // aynı model hiçbir renkte yok -> benzer modeller (görsel + metin)
+    out.durum = 'model_bedeni_yok_benzerler_var';
+    out.model_adi = p.title;
+    const sim = await similarByVision(session, p, size, kw);
+    out.benzer_urunler = sim.slice(0, 5).map((c) => catalog.brief(c, size));
+    out.not = sim.length
+      ? `Bu modelin ${size} numarası hiçbir renkte yok. En benzer modelleri fotoğraflarıyla öner (send_product_photos).`
+      : `Bu modelin ${size} numarası hiçbir renkte yok ve benzer stoklu model bulunamadı. Müşteriye dürüstçe söyle, farklı numara/model tercihini sor.`;
+    return out;
   }
+
+  // 4) katalogda birebir eşleşme yok -> görsele en çok benzeyen, istenen numarası stokta olan modeller
+  out.durum = 'katalogda_yok';
+  const sim = await similarByVision(session, null, size, kw);
+  out.benzer_urunler = sim.slice(0, 5).map((c) => catalog.brief(c, size));
+  out.not = sim.length
+    ? 'Müşterinin gönderdiği ürün sitede görünmüyor. Bunu nazikçe söyle ve görsele en çok benzeyen modelleri fotoğraflarıyla (send_product_photos) öner.'
+    : 'Sitede müşterinin ürününe benzer stoklu model bulunamadı. Dürüstçe söyle ve müşterinin tarzını/numarasını sorarak search_products ile alternatif ara.';
+  return out;
+}
+
+// Müşterinin görseline (ve varsa referans ürüne) en çok benzeyen, istenen numarası stokta olan modeller
+async function similarByVision(session, refProduct, size, keywords) {
+  let pool = [];
+  const seen = new Set();
+  const add = (list) => list.forEach((p) => !seen.has(p.id) && p.inStock && catalog.hasSize(p, size) && (seen.add(p.id), pool.push(p)));
+  if (refProduct) add(catalog.similarProducts(refProduct, size, 10));
+  add(catalog.searchProducts({ query: keywords, size, limit: 10 }));
+  if (pool.length < 6) add(catalog.suggestForSize(size, [], 8)); // son çare: bedeni olan çeşitli modeller
+  pool = pool.slice(0, 10);
+  if (!pool.length) return [];
+  const ranked = await rankByVision(session, pool, 'Müşterinin görselindeki ürüne tarz, renk ve form olarak EN ÇOK benzeyen adayları sırala.');
+  if (ranked === null) return pool.slice(0, 5);
+  const good = ranked.sort((a, b) => b.guven - a.guven).filter((r) => r.guven >= 0.35).map((r) => r.p);
+  return good.length ? good : pool.slice(0, 3);
+}
+
+// Metinle model adı verildiğinde de aynı mantık: numara -> diğer renkler -> benzerler
+function findAlternatives(productId, size) {
+  const p = catalog.getProduct(productId);
+  if (!p) return { hata: 'Ürün bulunamadı' };
+  if (!size) return { hata: 'Önce müşterinin ayakkabı numarasını öğren.' };
+  if (catalog.hasSize(p, size)) return { durum: 'stokta', urun: catalog.brief(p, size) };
+  const colors = catalog.otherColors(p, size);
+  if (colors.length) return { durum: 'beden_yok_diger_renk_var', diger_renkler: colors.slice(0, 5).map((c) => catalog.brief(c, size)) };
+  const sim = catalog.similarProducts(p, size, 6);
+  return { durum: sim.length ? 'model_bedeni_yok_benzerler_var' : 'alternatif_yok', benzer_urunler: sim.map((c) => catalog.brief(c, size)) };
 }
 
 // ---------- sipariş ----------
@@ -343,7 +436,9 @@ async function runTool(name, input, ctx) {
       return p ? catalog.brief(p) : { hata: 'Ürün bulunamadı' };
     }
     case 'match_customer_image':
-      return matchImage(session, input.hint);
+      return matchImage(session, input.size, input.hint);
+    case 'find_alternatives':
+      return findAlternatives(input.product_id, input.size);
     case 'suggest_upsell': {
       const count = Math.max(5, Math.min(Number(input.count) || 8, 10));
       const list = catalog.suggestForSize(input.size, input.exclude_ids || [], count, input.category_hint || '');

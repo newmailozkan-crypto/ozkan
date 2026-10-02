@@ -23,6 +23,8 @@ export const cfg = {
 
   anthropicKey: env.ANTHROPIC_API_KEY,
   model: env.CLAUDE_MODEL || 'claude-sonnet-5-5',
+  // Görsel eşleştirme için ayrı model istenirse (örn. sohbet Haiku, görsel Sonnet). Boşsa CLAUDE_MODEL kullanılır.
+  visionModel: env.VISION_MODEL || env.CLAUDE_MODEL || 'claude-sonnet-5-5',
 
   feedUrl: env.PRODUCT_FEED_URL,
   siteUrls: (env.SITE_INFO_URLS || '')
