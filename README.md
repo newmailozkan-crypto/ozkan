@@ -59,6 +59,18 @@ git push -u origin main
 
 > **Önemli:** Render'ın ücretsiz planı boşta uyur; Meta webhook'ları ve müşteri mesajları kaçabilir. Canlı kullanım için **Starter** plan önerilir.
 
+## Görsel tabanlı ürün akışı
+Müşteri bir ürün fotoğrafı gönderdiğinde bot şu sırayı izler:
+1. Görseli analiz eder ve XML katalogdaki adaylarla görsel olarak karşılaştırır.
+2. Ürün bulunduysa ve müşterinin numarası **stokta** ise fotoğraf + fiyat + özellik gönderip siparişe yönlendirir.
+3. Numara **tükenmişse**, aynı modelin o numarası stokta olan **diğer renklerini** fotoğraflarıyla önerir.
+4. Hiçbir renkte yoksa ya da ürün sitede yoksa, görsele **en çok benzeyen** ve numarası stokta olan modelleri önerir.
+5. Müşteri ürüne karar verince sipariş bilgilerini toplar.
+
+Renkleri bağlamak için kod; model kodu (`model`, `mpn`) varsa onu, yoksa başlıktan renk kelimelerini çıkararak bulduğu model adını kullanır. Aynı modelin renkleri XML'de aynı başlık yapısıyla (örn. "Deri Spor Ayakkabı Siyah" / "… Beyaz") veya aynı model kodu ile geliyorsa otomatik bağlanır.
+
+İsterseniz sohbet için ucuz bir model (Haiku), görsel eşleştirme için daha güçlü bir model kullanabilirsiniz: `CLAUDE_MODEL=claude-haiku-4-5-20251001` ve `VISION_MODEL=claude-sonnet-5-5`.
+
 ## Ortam değişkenleri
 | Değişken | Açıklama |
 |---|---|
@@ -67,7 +79,8 @@ git push -u origin main
 | `IG_ACCESS_TOKEN` | Instagram erişim token'ı |
 | `IG_ACCOUNT_ID` | Instagram profesyonel hesap ID |
 | `ANTHROPIC_API_KEY` | Claude API anahtarı |
-| `CLAUDE_MODEL` | Varsayılan `claude-sonnet-5-5` |
+| `CLAUDE_MODEL` | Sohbet modeli. Varsayılan `claude-sonnet-5-5` |
+| `VISION_MODEL` | (Opsiyonel) Görsel eşleştirme modeli; boşsa `CLAUDE_MODEL` |
 | `STORE_NAME` | Mağaza adı (bot kendini böyle tanıtır) |
 | `PRODUCT_FEED_URL` | Ürün XML linkiniz |
 | `SITE_INFO_URLS` | Kampanya/kargo/ödeme/iade sayfa linkleri (virgülle) |
