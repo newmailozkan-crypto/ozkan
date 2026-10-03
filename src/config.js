@@ -25,14 +25,26 @@ export const cfg = {
   model: env.CLAUDE_MODEL || 'claude-sonnet-5-5',
   // Görsel eşleştirme için ayrı model istenirse (örn. sohbet Haiku, görsel Sonnet). Boşsa CLAUDE_MODEL kullanılır.
   visionModel: env.VISION_MODEL || env.CLAUDE_MODEL || 'claude-sonnet-5-5',
+  // Ürün görsellerini tek seferlik tanımlayan model (ucuz olanı yeterli)
+  indexModel: env.INDEX_MODEL || 'claude-haiku-4-5-20251001',
+  // Instagram'ın görsellere ulaşacağı herkese açık adres (Render bunu RENDER_EXTERNAL_URL olarak kendisi verir)
+  publicUrl: (env.PUBLIC_BASE_URL || env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, ''),
 
   feedUrl: env.PRODUCT_FEED_URL,
   siteUrls: (env.SITE_INFO_URLS || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean),
-  feedRefreshMin: Number(env.FEED_REFRESH_MIN || 15),
-  siteRefreshMin: Number(env.SITE_REFRESH_MIN || 30),
+  // Stoklar sık değişmediği için ürünler ve site bilgisi varsayılan olarak 4,5 saatte bir (270 dk) yenilenir
+  feedRefreshMin: Number(env.FEED_REFRESH_MIN || 270),
+  siteRefreshMin: Number(env.SITE_REFRESH_MIN || 270),
+  // Ürün kaynağı: auto = önce XML, okunamazsa siteden; xml = sadece XML; site = sadece siteden
+  catalogSource: (env.CATALOG_SOURCE || 'auto').toLowerCase(),
+  // Siteden ürün çekme için kategori sayfası (WooCommerce). Sayfalama /page/2/ biçiminde izlenir.
+  siteCatalogUrl: env.SITE_CATALOG_URL || '',
+  siteProductPath: env.SITE_PRODUCT_PATH || '/product/',
+  // Instagram DM'de webp destekleniyor; yine de gerekirse JPEG'e çevirmek için true yapılabilir
+  convertWebp: String(env.CONVERT_WEBP || '').toLowerCase() === 'true',
   campaignRules: parseRules(env.CAMPAIGN_RULES),
 
   tgToken: env.TELEGRAM_BOT_TOKEN,

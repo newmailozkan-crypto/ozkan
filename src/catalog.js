@@ -1,5 +1,10 @@
 import { XMLParser } from 'fast-xml-parser';
 import { cfg } from './config.js';
+import { getVisual, indexVisuals, visualCount } from './visualIndex.js';
+import { parsePrice, decodeEntities } from './util.js';
+import { fetchSiteProducts } from './siteCatalog.js';
+
+export { parsePrice };
 
 const parser = new XMLParser({
   ignoreAttributes: true,
@@ -9,30 +14,32 @@ const parser = new XMLParser({
   processEntities: true,
 });
 
-let products = []; // normalize edilmiş, gruplanmış ürünler
+let products = []; // renk bazında tek ürün (bedenleri içinde), bellekte tutulur
 let byId = new Map();
 let lastUpdated = null;
 let lastError = null;
+let lastRawSample = [];
+let lastItemCount = 0;
 
-// ---------- renk / model anahtarı ----------
-const COLOR_WORDS = new Set([
-  'siyah', 'beyaz', 'gri', 'lacivert', 'kahverengi', 'taba', 'bej', 'krem', 'kirmizi', 'mavi', 'yesil', 'sari',
-  'pembe', 'mor', 'turuncu', 'bordo', 'antrasit', 'haki', 'ten', 'buz', 'fume', 'camel', 'gold', 'gumus', 'altin',
-  'petrol', 'mint', 'lila', 'ekru', 'vizon', 'nude', 'navy', 'black', 'white', 'grey', 'gray', 'brown', 'red', 'blue', 'green',
-]);
+// ---------- metin yardımcıları ----------
 const asciiTokens = (s) =>
   String(s || '')
     .toLocaleLowerCase('tr')
     .replace(/ç/g, 'c').replace(/ğ/g, 'g').replace(/ı/g, 'i').replace(/ö/g, 'o').replace(/ş/g, 's').replace(/ü/g, 'u')
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
-const detectColor = (title) => asciiTokens(title).find((t) => COLOR_WORDS.has(t)) || '';
-const stripColors = (title) => asciiTokens(title).filter((t) => !COLOR_WORDS.has(t)).join(' ');
+const asciiTok = (w) => asciiTokens(w).join('');
+const norm = (s) => asciiTokens(s).join(' ');
 
-// ---------- yardımcılar ----------
+const COLOR_WORDS = new Set([
+  'siyah', 'beyaz', 'gri', 'lacivert', 'kahverengi', 'kahve', 'aci', 'taba', 'bej', 'krem', 'kirmizi', 'mavi', 'yesil', 'sari',
+  'pembe', 'mor', 'turuncu', 'bordo', 'antrasit', 'haki', 'ten', 'buz', 'fume', 'camel', 'gold', 'gumus', 'altin', 'petrol',
+  'mint', 'lila', 'ekru', 'vizon', 'nude', 'leopar', 'zebra', 'yilan', 'sampanya', 'pudra', 'hardal', 'murdum', 'fusya', 'bakir',
+  'navy', 'black', 'white', 'grey', 'gray', 'brown', 'red', 'blue', 'green',
+]);
+
 const toArray = (v) => (v == null ? [] : Array.isArray(v) ? v : [v]);
-const lower = (o) =>
-  Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k.toLowerCase(), v]));
+const lower = (o) => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k.toLowerCase(), v]));
 
 function text(v) {
   if (v == null) return '';
@@ -48,27 +55,13 @@ function pick(raw, names) {
   return undefined;
 }
 
-export function parsePrice(v) {
-  if (v == null) return null;
-  let s = text(v).replace(/[^\d.,]/g, '');
-  if (!s) return null;
-  const lc = s.lastIndexOf(',');
-  const ld = s.lastIndexOf('.');
-  if (lc > -1 && ld > -1) {
-    s = lc > ld ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
-  } else if (lc > -1) {
-    s = /,\d{1,2}$/.test(s) ? s.replace(',', '.') : s.replace(/,/g, '');
-  } else if (ld > -1 && /^\d{1,3}(\.\d{3})+$/.test(s)) {
-    s = s.replace(/\./g, '');
-  }
-  const n = Number(s);
-  return Number.isFinite(n) && n > 0 ? n : null;
+function cleanCategory(s) {
+  return decodeEntities(s).replace(/^\s*(home|ana sayfa|anasayfa)\s*>\s*/i, '').replace(/\s*>\s*/g, ' > ').trim();
 }
 
 function stripHtml(s) {
-  return text(s)
+  return decodeEntities(text(s))
     .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -88,6 +81,39 @@ function stockNumber(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+// "37", "37 Numara", "37 (EU)", "37,5" gibi yazımları aynı sayıya indirger; harfli bedenlerde (S, M, L) metin karşılaştırır
+const sizeKey = (s) => {
+  const m = String(s ?? '').replace(',', '.').match(/\d+(?:\.\d+)?/);
+  return m ? m[0] : norm(s);
+};
+const sizeNum = (s) => {
+  const n = Number(sizeKey(s));
+  return Number.isFinite(n) ? n : 9999;
+};
+
+// ---------- ürün linkinden beden / renk ----------
+// Bu tür WooCommerce feed'lerinde beden ayrı bir alan değil, linkte gelir: ...?attribute_pa_numara=37
+function parseLink(link) {
+  const empty = { base: '', size: null, sizeParam: null, color: null };
+  if (!link) return empty;
+  try {
+    const u = new URL(link);
+    const out = { base: u.origin + u.pathname, size: null, sizeParam: null, color: null };
+    for (const [k, v] of u.searchParams) {
+      const kk = k.toLowerCase();
+      if (/^attribute_(pa_)?(numara|beden|size|ayakkabi_?numarasi|ayakkabi-?numarasi)$/.test(kk)) {
+        out.size = v;
+        out.sizeParam = k;
+      } else if (/^attribute_(pa_)?(renk|color|colour)$/.test(kk)) {
+        out.color = v.replace(/[-_]+/g, ' ');
+      }
+    }
+    return out;
+  } catch {
+    return { ...empty, base: String(link).split('?')[0] };
+  }
+}
+
 // ---------- ürün listesini XML ağacında bul ----------
 function findItems(node) {
   const KEYS = ['item', 'entry', 'product', 'urun', 'ürün', 'row'];
@@ -105,7 +131,7 @@ function findItems(node) {
   return best;
 }
 
-// ---------- bedenler ----------
+// ---------- bedenler (ayrı alan / varyant etiketi olan feed'ler için) ----------
 function extractSizes(raw, itemAvail) {
   const out = [];
   const add = (size, stock, avail) => {
@@ -120,9 +146,8 @@ function extractSizes(raw, itemAvail) {
 
   const holder = pick(raw, ['variants', 'variant', 'varyantlar', 'varyant', 'secenekler', 'seçenekler', 'options', 'sizes', 'bedenler']);
   if (holder && typeof holder === 'object') {
-    const list = toArray(
-      holder.variant ?? holder.varyant ?? holder.option ?? holder.secenek ?? holder.size ?? holder.beden ?? holder.item ?? holder
-    );
+    const h = Array.isArray(holder) ? {} : lower(holder); // <Variants><Variant> gibi büyük harfli etiketler için
+    const list = toArray(h.variant ?? h.varyant ?? h.option ?? h.secenek ?? h.size ?? h.beden ?? h.item ?? holder);
     for (const o of list) {
       if (o && typeof o === 'object') {
         const lo = lower(o);
@@ -147,11 +172,11 @@ function extractSizes(raw, itemAvail) {
   return out;
 }
 
-// ---------- tek ürün normalize ----------
+// ---------- tek kayıt normalize ----------
 function normalize(rawIn) {
   const raw = lower(rawIn);
   const id = text(pick(raw, ['id', 'productid', 'product_id', 'sku', 'stockcode', 'stokkodu', 'urunid', 'code', 'barcode']));
-  const title = text(pick(raw, ['title', 'name', 'productname', 'urunadi', 'urun_adi', 'baslik', 'label']));
+  const title = decodeEntities(text(pick(raw, ['title', 'name', 'productname', 'urunadi', 'urun_adi', 'baslik', 'label'])));
   if (!id && !title) return null;
 
   const priceNormal = parsePrice(pick(raw, ['price', 'listprice', 'fiyat', 'normalfiyat', 'regularprice', 'pricewithvat', 'price1']));
@@ -171,8 +196,11 @@ function normalize(rawIn) {
   }
   const images = [...new Set(imgs.filter((u) => /^https?:\/\//i.test(u)))];
 
+  const link = parseLink(text(pick(raw, ['link', 'url', 'producturl', 'urunlink', 'permalink'])));
   const availFlag = availabilityFlag(pick(raw, ['availability', 'stokdurumu', 'stock_status', 'stockstatus', 'durum']));
-  const sizes = extractSizes(raw, availFlag);
+
+  let sizes = extractSizes(raw, availFlag);
+  if (!sizes.length && link.size) sizes = [{ size: String(link.size), stock: null, inStock: availFlag !== false }];
 
   let inStock;
   if (sizes.length) inStock = sizes.some((s) => s.inStock);
@@ -181,34 +209,85 @@ function normalize(rawIn) {
     inStock = q != null ? q > 0 : availFlag !== false;
   }
 
-  const brand = text(pick(raw, ['brand', 'marka', 'manufacturer']));
-  const color = text(pick(raw, ['color', 'renk'])) || detectColor(title);
-  const modelCode = text(pick(raw, ['model', 'modelcode', 'model_code', 'mpn', 'modelkodu']));
-  // Aynı modelin farklı renklerini bağlayan anahtar: model kodu varsa o, yoksa renk kelimeleri çıkarılmış başlık
-  const modelKey = asciiTokens(modelCode || `${brand} ${stripColors(title)}`).join(' ') || String(id || title);
+  const colorField = text(pick(raw, ['color', 'renk'])) || link.color || '';
   const groupId = text(pick(raw, ['item_group_id', 'group_id', 'groupid', 'parentid', 'parent_id'])) || null;
+  const description = stripHtml(pick(raw, ['description', 'aciklama', 'açıklama', 'detail', 'detay', 'content'])).slice(0, 600);
+  const groupBase = groupId || link.base || null;
 
   return {
     id: id || title,
     groupId,
-    groupKey: groupId ? `${groupId}|${asciiTokens(color).join('')}` : null, // aynı renk + farklı beden satırlarını birleştirir
-    modelKey,
+    // aynı ürünün beden satırlarını tek ürüne birleştirir; renk ayrı alan/linkte geliyorsa renkleri de ayırır
+    groupKey: groupBase ? `${groupBase}|${asciiTok(colorField)}` : null,
+    descSig: asciiTokens(description).join('').slice(0, 160),
+    colorField,
+    modelName: '',
+    modelKey: '',
     title,
-    brand,
-    category: text(pick(raw, ['product_type', 'category', 'kategori', 'categorypath', 'google_product_category'])),
-    color,
-    description: stripHtml(pick(raw, ['description', 'aciklama', 'açıklama', 'detail', 'detay', 'content'])).slice(0, 600),
+    brand: text(pick(raw, ['brand', 'marka', 'manufacturer'])),
+    category: cleanCategory(text(pick(raw, ['product_type', 'category', 'kategori', 'categorypath', 'google_product_category']))),
+    color: colorField,
+    description,
     price,
     priceOriginal: priceNormal && price && priceNormal > price ? priceNormal : null,
     currency: text(pick(raw, ['currency', 'parabirimi'])) || 'TL',
-    url: text(pick(raw, ['link', 'url', 'producturl', 'urunlink', 'permalink'])),
+    url: link.base || text(pick(raw, ['link', 'url'])),
+    sizeParam: link.sizeParam,
     images,
     sizes,
     inStock,
+    visual: null,
+    visualText: '',
   };
 }
 
-// Aynı model/renk varyantlarını (satır başına bir beden) tek ürüne birleştir
+// ---------- model ve renk ayrımı ----------
+// Bu feed'de renk ayrı alan değil, başlığın sonunda: "Platform Acı Kahve", "Platform Taba", "Tazz Vizon".
+// 1) Aynı açıklama metnini paylaşan kayıtlar aynı modelin renkleridir: başlıkların ortak başı model adı, kalanı renktir.
+// 2) Bu olmazsa başlıktaki bilinen renk kelimeleri renk, kalanı model adı sayılır.
+function splitTitle(title) {
+  const words = title.split(/\s+/).filter(Boolean);
+  const colorWords = words.filter((w) => COLOR_WORDS.has(asciiTok(w)));
+  const nameWords = words.filter((w) => !COLOR_WORDS.has(asciiTok(w)));
+  return { modelName: (nameWords.length ? nameWords : words).join(' '), color: colorWords.join(' ') };
+}
+
+function assignModels(items) {
+  const bySig = new Map();
+  for (const p of items) {
+    if (p.descSig.length < 40) continue;
+    if (!bySig.has(p.descSig)) bySig.set(p.descSig, []);
+    bySig.get(p.descSig).push(p);
+  }
+  const done = new Set();
+  for (const group of bySig.values()) {
+    const titles = [...new Set(group.map((p) => p.title))];
+    if (titles.length < 2) continue;
+    const toks = titles.map((t) => t.split(/\s+/).filter(Boolean));
+    let n = 0;
+    while (toks.every((t) => t[n] && asciiTok(t[n]) === asciiTok(toks[0][n]))) n++;
+    // "Elevate Beyaz Gri" + "Elevate Beyaz Lacivert": ortak başta kalan "Beyaz" renktir, model adı değil
+    while (n > 0 && COLOR_WORDS.has(asciiTok(toks[0][n - 1]))) n--;
+    if (n >= 1 && toks.every((t) => t.length > n)) {
+      const modelName = toks[0].slice(0, n).join(' ');
+      for (const p of group) {
+        p.modelName = modelName;
+        p.color = p.colorField || p.title.split(/\s+/).filter(Boolean).slice(n).join(' ');
+        done.add(p);
+      }
+    }
+  }
+  for (const p of items) {
+    if (!done.has(p)) {
+      const s = splitTitle(p.title);
+      p.modelName = s.modelName;
+      p.color = p.colorField || s.color;
+    }
+    p.modelKey = asciiTokens(p.modelName).join(' ') || String(p.id);
+  }
+}
+
+// Beden satırlarını (her biri ayrı kayıt) renk bazında tek ürüne birleştir
 function groupVariants(list) {
   const groups = new Map();
   const out = [];
@@ -219,45 +298,143 @@ function groupVariants(list) {
     }
     const g = groups.get(p.groupKey);
     if (!g) {
-      const slug = asciiTokens(p.color).join('');
-      groups.set(p.groupKey, { ...p, sizes: [...p.sizes], id: slug ? `${p.groupId}-${slug}` : p.groupId });
+      groups.set(p.groupKey, { ...p, sizes: [...p.sizes], images: [...p.images], id: p.groupId || p.id });
     } else {
       for (const s of p.sizes) {
-        if (!g.sizes.find((x) => x.size === s.size)) g.sizes.push(s);
+        const ex = g.sizes.find((x) => sizeKey(x.size) === sizeKey(s.size));
+        if (!ex) g.sizes.push(s);
+        else if (s.inStock) ex.inStock = true;
       }
       if (!g.images.length) g.images = p.images;
       g.inStock = g.inStock || p.inStock;
     }
   }
-  return [...out, ...groups.values()];
+  const merged = [...out, ...groups.values()];
+  for (const p of merged) p.sizes.sort((a, b) => sizeNum(a.size) - sizeNum(b.size));
+  return merged;
 }
 
 export function parseFeed(xml) {
   const tree = parser.parse(xml);
   const items = findItems(tree);
+  lastRawSample = items.slice(0, 2);
+  lastItemCount = items.length;
   const normalized = items.map(normalize).filter(Boolean);
+  assignModels(normalized);
   const grouped = groupVariants(normalized);
   return grouped.filter((p) => p.title && p.price);
 }
 
-// ---------- yenileme ----------
-export async function refreshCatalog() {
-  if (!cfg.feedUrl) throw new Error('PRODUCT_FEED_URL tanımlı değil');
-  try {
-    const res = await fetch(cfg.feedUrl, { headers: { 'User-Agent': 'ig-satis-botu/1.0' } });
-    if (!res.ok) throw new Error(`Feed HTTP ${res.status}`);
-    const xml = await res.text();
-    const list = parseFeed(xml);
-    if (!list.length) throw new Error('Feed ayrıştırıldı ama ürün bulunamadı (alan adlarını kontrol edin)');
-    products = list;
-    byId = new Map(list.map((p) => [String(p.id), p]));
-    lastUpdated = new Date();
-    lastError = null;
-    console.log(`[catalog] ${list.length} ürün yüklendi (${list.filter((p) => p.inStock).length} stokta)`);
-  } catch (e) {
-    lastError = e.message;
-    console.error('[catalog] yenileme hatası:', e.message);
+// ---------- hafıza ----------
+function setProductsInternal(list) {
+  products = list;
+  byId = new Map(list.map((p) => [String(p.id), p]));
+  attachVisuals();
+}
+
+function attachVisuals() {
+  for (const p of products) {
+    p.visual = p.images[0] ? getVisual(p.images[0]) : null;
+    p.visualText = p.visual?.text || '';
   }
+}
+
+// Siteden gelen düz ürünleri bellekteki ürün biçimine çevirir (renk bazında, bedenleri içinde)
+export function fromSite(list) {
+  const items = list.map((p) => ({
+    id: String(p.id),
+    groupId: null,
+    groupKey: null,
+    descSig: asciiTokens(p.description).join('').slice(0, 160),
+    colorField: p.colorField || '',
+    modelName: '',
+    modelKey: '',
+    title: p.title,
+    brand: '',
+    category: cleanCategory(p.category || ''),
+    color: p.colorField || '',
+    description: p.description || '',
+    price: p.price,
+    priceOriginal: null,
+    currency: 'TL',
+    url: p.url,
+    sizeParam: 'attribute_pa_numara',
+    images: p.images || [],
+    sizes: (p.sizes || []).map((x) => ({ size: String(x.size), stock: x.stock ?? null, inStock: x.inStock !== false })),
+    inStock: p.inStock !== false,
+    visual: null,
+    visualText: '',
+  }));
+  for (const p of items) p.sizes.sort((a, b) => sizeNum(a.size) - sizeNum(b.size));
+  assignModels(items);
+  return items.filter((p) => p.title && p.price);
+}
+
+let lastSource = '';
+let retryTimer = null;
+
+async function loadFromXml() {
+  const res = await fetch(cfg.feedUrl, { headers: { 'User-Agent': 'ig-satis-botu/1.0' } });
+  if (!res.ok) throw new Error(`Feed HTTP ${res.status}`);
+  const list = parseFeed(await res.text());
+  if (!list.length) throw new Error('Feed ayrıştırıldı ama ürün bulunamadı (alan adlarını kontrol edin)');
+  return list;
+}
+
+export async function refreshCatalog() {
+  const mode = cfg.catalogSource; // auto | xml | site
+  const errors = [];
+  let list = null;
+  let source = '';
+
+  if (mode !== 'site' && cfg.feedUrl) {
+    try {
+      list = await loadFromXml();
+      source = 'xml';
+    } catch (e) {
+      errors.push(`XML: ${e.message}`);
+      console.error('[catalog] XML okunamadı:', e.message);
+    }
+  }
+  if (!list && mode !== 'xml') {
+    try {
+      const r = await fetchSiteProducts();
+      list = fromSite(r.list);
+      source = `site (${r.how})`;
+      lastItemCount = r.list.length;
+      lastRawSample = [];
+      if (!list.length) throw new Error('Siteden ürün okunamadı');
+    } catch (e) {
+      list = null;
+      errors.push(`Site: ${e.message}`);
+      console.error('[catalog] siteden okunamadı:', e.message);
+    }
+  }
+
+  if (!list) {
+    lastError = errors.join(' | ') || 'Katalog kaynağı tanımlı değil';
+    // hiç ürün yokken 5 dakika sonra tekrar dene; ürün varsa eski veri korunur, sonraki turda yenilenir
+    if (!products.length && !retryTimer) {
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        refreshCatalog();
+      }, 5 * 60 * 1000);
+      retryTimer.unref?.();
+    }
+    return;
+  }
+
+  setProductsInternal(list);
+  lastUpdated = new Date();
+  lastError = errors.length ? `(yedek kaynak kullanıldı) ${errors.join(' | ')}` : null;
+  lastSource = source;
+  console.log(
+    `[catalog] kaynak: ${source} | ${lastItemCount} kayıt -> ${list.length} renk/ürün, ${new Set(list.map((p) => p.modelKey)).size} model (${list.filter((p) => p.inStock).length} stokta)`
+  );
+  // Yeni ürün görsellerini arka planda tanımla, bitince bellekteki ürünlere işle
+  indexVisuals(list.map((p) => p.images[0]))
+    .then((n) => n && attachVisuals())
+    .catch((e) => console.error('[visual]', e.message));
 }
 
 export function startCatalogRefresh() {
@@ -266,7 +443,7 @@ export function startCatalogRefresh() {
 }
 
 export function catalogStatus() {
-  return { count: products.length, lastUpdated, lastError };
+  return { source: lastSource, count: products.length, models: new Set(products.map((p) => p.modelKey)).size, visualIndexed: visualCount(), lastUpdated, lastError };
 }
 
 // Test amaçlı: listeyi doğrudan yükle
@@ -275,29 +452,25 @@ export function setProducts(list) {
   byId = new Map(list.map((p) => [String(p.id), p]));
 }
 
-// ---------- sorgular ----------
-const norm = (s) =>
-  String(s || '')
-    .toLocaleLowerCase('tr')
-    .replace(/[çÇ]/g, 'c')
-    .replace(/[ğĞ]/g, 'g')
-    .replace(/[ıİ]/g, 'i')
-    .replace(/[öÖ]/g, 'o')
-    .replace(/[şŞ]/g, 's')
-    .replace(/[üÜ]/g, 'u');
+export const allProducts = () => products;
 
+// ---------- sorgular ----------
 export function hasSize(p, size) {
   if (!size) return true;
   if (!p.sizes.length) return p.inStock;
-  return p.sizes.some((s) => s.inStock && norm(s.size) === norm(size));
+  const k = sizeKey(size);
+  return p.sizes.some((s) => s.inStock && sizeKey(s.size) === k);
 }
 
 export function getProduct(id) {
   return byId.get(String(id)) || null;
 }
 
+// "botlar" -> "bot" gibi basit çekim eki temizliği
+const stem = (t) => (t.length > 4 ? t.replace(/(lar|ler)(i|in|e|a|den|dan)?$/, '') : t);
+
 export function searchProducts({ query = '', size, maxPrice, limit = 8, excludeIds = [], inStockOnly = true } = {}) {
-  const tokens = norm(query).split(/[^a-z0-9]+/).filter((t) => t.length > 1);
+  const tokens = [...new Set(asciiTokens(query).filter((t) => t.length > 1).flatMap((t) => [t, stem(t)]))];
   const ex = new Set(excludeIds.map(String));
   const scored = [];
   for (const p of products) {
@@ -307,7 +480,7 @@ export function searchProducts({ query = '', size, maxPrice, limit = 8, excludeI
     if (maxPrice && p.price > maxPrice) continue;
     let score = 0;
     if (tokens.length) {
-      const hay = norm([p.title, p.brand, p.category, p.color, p.description].join(' '));
+      const hay = norm([p.title, p.modelName, p.brand, p.category, p.color, p.visualText, p.description].join(' '));
       const titleHay = norm(p.title);
       for (const t of tokens) {
         if (titleHay.includes(t)) score += 3;
@@ -321,53 +494,185 @@ export function searchProducts({ query = '', size, maxPrice, limit = 8, excludeI
   return scored.slice(0, limit).map((x) => x.p);
 }
 
-// Aynı modelin (aynı model anahtarı) diğer renkleri; size verilirse sadece o numarası stokta olanlar
+// Aynı modelin diğer renkleri; size verilirse sadece o numarası stokta olanlar
 export function otherColors(p, size) {
-  return products.filter(
-    (x) => x.id !== p.id && x.modelKey === p.modelKey && x.inStock && hasSize(x, size) && x.color.toLowerCase() !== p.color.toLowerCase()
-  );
+  return products.filter((x) => x.id !== p.id && x.modelKey === p.modelKey && x.inStock && hasSize(x, size));
 }
 
-// Metin tabanlı benzerlik: kategori, marka, başlık kelimeleri ve fiyat yakınlığı
+// Aynı modelin tüm renkleri (stok durumu bilgisiyle)
+export function familyOf(p) {
+  return products.filter((x) => x.modelKey === p.modelKey);
+}
+
+// Her modelden önce tek renk, sonra kalanlar: öneri listesi çeşitli olsun
+function diversify(list, limit) {
+  const seen = new Set();
+  const first = [];
+  const rest = [];
+  for (const x of list) {
+    if (seen.has(x.modelKey)) rest.push(x);
+    else {
+      seen.add(x.modelKey);
+      first.push(x);
+    }
+  }
+  return [...first, ...rest].slice(0, limit);
+}
+
+const styleSet = (p) =>
+  new Set(
+    asciiTokens([p.category, p.visual?.tur, p.visual?.stil, p.visual?.taban, p.visual?.materyal, p.visual?.desen].filter(Boolean).join(' ')).filter((t) => t.length > 2)
+  );
+
+// Benzerlik: kategori + görsel hafızadaki tür/stil/taban/materyal/desen örtüşmesi + fiyat yakınlığı
 export function similarProducts(p, size, limit = 6) {
-  const base = new Set(asciiTokens(stripColors(p.title)));
+  const sa = styleSet(p);
   const scored = [];
   for (const x of products) {
     if (x.id === p.id || x.modelKey === p.modelKey || !x.inStock || !hasSize(x, size)) continue;
-    let score = 0;
+    const sb = styleSet(x);
+    let inter = 0;
+    for (const t of sa) if (sb.has(t)) inter++;
+    const union = sa.size + sb.size - inter || 1;
+    let score = (inter / union) * 6;
     if (p.category && x.category && norm(x.category) === norm(p.category)) score += 3;
-    if (p.brand && x.brand && norm(x.brand) === norm(p.brand)) score += 2;
-    for (const t of asciiTokens(stripColors(x.title))) if (base.has(t)) score += 1;
+    if (p.brand && x.brand && norm(x.brand) === norm(p.brand)) score += 1;
     if (p.price && Math.abs(x.price - p.price) / p.price <= 0.3) score += 1;
-    if (score > 0) scored.push({ x, score });
+    if (asciiTokens(p.color).some((t) => asciiTokens(x.color).includes(t))) score += 0.5;
+    scored.push({ x, score });
   }
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, limit).map((s) => s.x);
+  return diversify(scored.map((s) => s.x), limit);
 }
 
+// Çapraz satış: müşterinin numarası stokta olan, farklı modellerden öneriler
 export function suggestForSize(size, excludeIds = [], count = 8, preferCategory = '') {
-  const pool = searchProducts({ size, excludeIds, limit: 200 });
+  const excluded = new Set(excludeIds.map(String));
+  const excludedModels = new Set(products.filter((p) => excluded.has(String(p.id))).map((p) => p.modelKey));
+  const pool = searchProducts({ size, excludeIds, limit: 500 });
   const pc = norm(preferCategory);
-  const same = pc ? pool.filter((p) => norm(p.category).includes(pc)) : [];
-  const rest = pool.filter((p) => !same.includes(p));
   const shuffle = (a) => a.map((v) => [Math.random(), v]).sort((x, y) => x[0] - y[0]).map((x) => x[1]);
-  return [...shuffle(same), ...shuffle(rest)].slice(0, count);
+  const same = pc ? pool.filter((p) => norm(p.category).includes(pc)) : [];
+  const ordered = [...shuffle(same), ...shuffle(pool.filter((p) => !same.includes(p)))];
+  const newModels = ordered.filter((p) => !excludedModels.has(p.modelKey));
+  const sameModels = ordered.filter((p) => excludedModels.has(p.modelKey));
+  // önce yeni modeller (her modelden tek renk), sonra yeni modellerin diğer renkleri, en son siparişteki modelin diğer renkleri
+  return [...diversify(newModels, 500), ...sameModels].slice(0, count);
+}
+
+// Müşteri fotoğrafının tanımını (tür, renk, stil, taban, materyal, desen) görsel hafızadaki ürün tanımlarıyla karşılaştırıp
+// görsel karşılaştırmaya girecek aday ürünleri daraltır. En iyi birkaç modelin diğer renkleri de aday listesine eklenir.
+export function shortlistByVisual(desc, hint = '', limit = 14) {
+  const toks = (k) => new Set(asciiTokens(desc?.[k] || '').filter((t) => t.length > 2));
+  const [tur, renk, stil, taban, mat, desen] = ['tur', 'renk', 'stil', 'taban', 'materyal', 'desen'].map(toks);
+  const hintTok = new Set(asciiTokens(hint).filter((t) => t.length > 2));
+  const scored = products
+    .filter((p) => p.images.length)
+    .map((p) => {
+      let s = 0;
+      const ov = (set, text, w) => {
+        for (const t of asciiTokens(text)) if (set.has(t)) s += w;
+      };
+      const v = p.visual;
+      if (v) {
+        ov(tur, v.tur, 3);
+        ov(renk, v.renk, 2);
+        ov(stil, v.stil, 2);
+        ov(taban, v.taban, 1);
+        ov(mat, v.materyal, 1);
+        ov(desen, v.desen, 1);
+      } else {
+        ov(tur, `${p.title} ${p.category}`, 2); // görsel tanımı henüz yoksa başlık/kategoriye bak
+        ov(renk, p.color, 2);
+      }
+      ov(hintTok, `${p.title} ${p.modelName} ${p.color}`, 2);
+      return { p, s };
+    })
+    .sort((a, b) => b.s - a.s);
+
+  const out = [];
+  const add = (p) => {
+    if (out.length < limit && !out.includes(p)) out.push(p);
+  };
+  scored.slice(0, 3).forEach(({ p }) => {
+    add(p);
+    familyOf(p).forEach(add); // aynı modelin renkleri: tam rengi görsel karşılaştırma seçsin
+  });
+  scored.forEach(({ p }) => add(p));
+  return out;
 }
 
 // Model'e gidecek kısa ürün özeti
 export function brief(p, size) {
+  const link = p.url && p.sizeParam && size ? `${p.url}?${p.sizeParam}=${encodeURIComponent(sizeKey(size))}` : p.url || undefined;
   return {
     id: p.id,
     baslik: p.title,
-    marka: p.brand || undefined,
-    kategori: p.category || undefined,
+    model: p.modelName || undefined,
     renk: p.color || undefined,
+    kategori: p.category || undefined,
+    marka: p.brand || undefined,
     fiyat_tl: p.price,
-    eski_fiyat_tl: p.priceOriginal || undefined,
     stokta_olan_bedenler: p.sizes.filter((s) => s.inStock).map((s) => s.size),
     secilen_beden_stokta: size ? hasSize(p, size) : undefined,
-    aciklama: p.description || undefined,
-    link: p.url || undefined,
+    gorunum: p.visual?.ozet || undefined,
+    aciklama: p.description ? p.description.slice(0, 300) : undefined,
+    link,
     gorsel_var: p.images.length > 0,
   };
+}
+
+// ---------- teşhis (debug) ----------
+const clip = (_k, v) => (typeof v === 'string' && v.length > 160 ? v.slice(0, 160) + '…' : v);
+
+export function debugFeed() {
+  return {
+    kaynak: lastSource,
+    okunan_kayit: lastItemCount,
+    islenen_urun_renk_bazinda: products.length,
+    model_sayisi: new Set(products.map((p) => p.modelKey)).size,
+    gorsel_tanimli: products.filter((p) => p.visual).length,
+    son_hata: lastError,
+    ham_ornek_kayitlar: JSON.parse(JSON.stringify(lastRawSample, clip)),
+  };
+}
+
+const sizeLine = (p) => p.sizes.map((x) => `${x.size}${x.inStock ? '✓' : '✗'}${x.stock != null ? '(' + x.stock + ')' : ''}`).join(' ');
+
+export function debugSearch(q = '', limit = 10) {
+  const list = q ? searchProducts({ query: q, limit, inStockOnly: false }) : products.slice(0, limit);
+  return {
+    toplam_urun: products.length,
+    sonuc: list.map((p) => ({
+      id: p.id,
+      baslik: p.title,
+      model: p.modelName,
+      renk: p.color,
+      model_anahtari: p.modelKey,
+      kategori: p.category,
+      fiyat: p.price,
+      eski_fiyat: p.priceOriginal,
+      stokta: p.inStock,
+      bedenler: sizeLine(p),
+      gorsel_tanimi: p.visual?.ozet || null,
+      ilk_gorsel: p.images[0] || null,
+      link: p.url,
+    })),
+  };
+}
+
+// Modeller, renkleri ve her modele en benzeyen diğer modeller
+export function debugFamilies() {
+  const models = new Map();
+  for (const p of products) {
+    if (!models.has(p.modelKey)) models.set(p.modelKey, []);
+    models.get(p.modelKey).push(p);
+  }
+  return [...models.entries()].map(([key, list]) => ({
+    model: list[0].modelName,
+    model_anahtari: key,
+    kategori: list[0].category,
+    renkler: list.map((p) => ({ renk: p.color, id: p.id, bedenler: sizeLine(p), fiyat: p.price })),
+    benzer_modeller: [...new Set(similarProducts(list[0], '', 6).map((s) => s.modelName))].slice(0, 4),
+  }));
 }
