@@ -37,5 +37,7 @@ services:
         sync: false
       - key: STORE_NAME
         sync: false
+      - key: CATALOG_FALLBACK_FILE
+        value: data/feed.xml
       - key: CLAUDE_MODEL
         value: claude-sonnet-5-5

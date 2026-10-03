@@ -130,3 +130,13 @@ Kod Google Merchant / Facebook feed'i, ve `<Product>…<Variants><Variant><Size>
 - **Maliyet:** Her mesaj Claude API kullanır; görsel eşleştirme ek 2 çağrı yapar. Sistem istemi önbelleğe alınır.
 - Bot, kampanya/kargo/ödeme için yalnızca site sayfalarındaki bilgiyi kullanır; sayfa yapısı değişirse `SITE_INFO_URLS` içindeki linkleri güncelleyin. Kampanya, kargo ve iade bilgileri çoğu mağazada ürün sayfasında da yer alır; bir ürün sayfasını (örn. `https://siteniz.com/product/ornek-urun/`) `SITE_INFO_URLS`'e eklemek botun bu bilgileri bilmesini sağlar.
 - Stoklar 4,5 saatte bir güncellendiği için bu aralıkta tükenen bir numara bot için hâlâ stokta görünebilir; siparişler Telegram'a düştüğünde ekibiniz stoğu doğrulamalıdır.
+
+
+## Katalog yüklenemezse (v2.1)
+
+- Açılışta Telegram'a "✅ Katalog yüklendi (kaynak, ürün sayısı)" ya da "⚠️ KATALOG YÜKLENEMEDİ (tam hata)" mesajı gelir.
+- Durumu görmek için: `https://SERVİSİN.onrender.com/debug/status?key=IG_VERIFY_TOKEN` (deneme kaydı, hangi env tanımlı) ve `/health`.
+- Kaynak sırası: XML → site (Store API / kategori sayfası) → `data/feed.xml` (elle yüklenen kopya, bkz. `data/README.md`).
+- Sitenizde 403 görürseniz: güvenlik duvarında Render çıkış IP'lerine izin verin veya `/wp-content/uploads/woo-product-feed-pro/*` ile `/wp-json/wc/store/*` yollarını bot korumasından hariç tutun; ya da `data/feed.xml` yükleyin.
+- Katalog boşken bot "ürün yok" demez; ekibe haber verir ve müşteriden iletişim bilgisi alır.
+- Müşteri görseli eşleşince (güven ≥ %45) ürün/diğer renk/benzer model fotoğrafları sunucu tarafından otomatik gönderilir. `npm test` üç test dosyasını çalıştırır.

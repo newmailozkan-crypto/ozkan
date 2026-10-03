@@ -1,7 +1,7 @@
 import express from 'express';
 import { cfg, checkConfig } from './src/config.js';
 import * as ig from './src/instagram.js';
-import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies } from './src/catalog.js';
+import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, BOT_VERSION } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
 import { handleDirectMessage, handleComment, setUsername } from './src/ai.js';
 import { initImages, instagramImageUrl, serveImage } from './src/images.js';
@@ -21,7 +21,7 @@ app.use(
 );
 
 app.get('/', (_req, res) => res.send('Instagram satış botu çalışıyor ✅'));
-app.get('/health', (_req, res) => res.json({ ok: true, catalog: catalogStatus(), site: siteStatus() }));
+app.get('/health', (_req, res) => res.json({ ok: true, version: BOT_VERSION, catalog: catalogStatus(), site: siteStatus() }));
 
 // Teşhis: botun XML'den ne okuduğunu gösterir. Erişim için ?key=IG_VERIFY_TOKEN gerekir.
 const debugAuth = (req, res) => {
@@ -31,6 +31,7 @@ const debugAuth = (req, res) => {
   }
   return true;
 };
+app.get('/debug/status', (req, res) => debugAuth(req, res) && res.json({ ...debugStatus(), env: Object.fromEntries(['IG_VERIFY_TOKEN','IG_ACCESS_TOKEN','IG_ACCOUNT_ID','ANTHROPIC_API_KEY','PRODUCT_FEED_URL','SITE_CATALOG_URL','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID'].map((k) => [k, Boolean(process.env[k])])), models: { chat: cfg.model, vision: cfg.visionModel, index: cfg.indexModel } }));
 app.get('/debug/feed', (req, res) => debugAuth(req, res) && res.json(debugFeed()));
 app.get('/debug/catalog', (req, res) => debugAuth(req, res) && res.json(debugSearch(String(req.query.q || ''), Math.min(Number(req.query.limit) || 10, 30))));
 app.get('/debug/families', (req, res) => debugAuth(req, res) && res.json(debugFamilies()));
