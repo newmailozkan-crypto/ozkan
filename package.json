@@ -7,10 +7,15 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --env-file=.env server.js",
-    "test:feed": "node test-feed.js"
+    "test:feed": "node test-feed.js",
+    "test:site": "node test-site.js",
+    "test": "node test-feed.js && node test-site.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "optionalDependencies": {
+    "sharp": "^0.33.5"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.60.0",

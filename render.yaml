@@ -23,6 +23,14 @@ services:
         sync: false
       - key: SITE_INFO_URLS
         sync: false
+      - key: SITE_CATALOG_URL
+        sync: false
+      - key: CATALOG_SOURCE
+        value: auto
+      - key: FEED_REFRESH_MIN
+        value: 270
+      - key: SITE_REFRESH_MIN
+        value: 270
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID

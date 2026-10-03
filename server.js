@@ -1,9 +1,10 @@
 import express from 'express';
 import { cfg, checkConfig } from './src/config.js';
 import * as ig from './src/instagram.js';
-import { startCatalogRefresh, catalogStatus } from './src/catalog.js';
+import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
 import { handleDirectMessage, handleComment, setUsername } from './src/ai.js';
+import { initImages, instagramImageUrl, serveImage } from './src/images.js';
 
 checkConfig();
 
@@ -21,6 +22,30 @@ app.use(
 
 app.get('/', (_req, res) => res.send('Instagram satış botu çalışıyor ✅'));
 app.get('/health', (_req, res) => res.json({ ok: true, catalog: catalogStatus(), site: siteStatus() }));
+
+// Teşhis: botun XML'den ne okuduğunu gösterir. Erişim için ?key=IG_VERIFY_TOKEN gerekir.
+const debugAuth = (req, res) => {
+  if (!cfg.verifyToken || req.query.key !== cfg.verifyToken) {
+    res.sendStatus(403);
+    return false;
+  }
+  return true;
+};
+app.get('/debug/feed', (req, res) => debugAuth(req, res) && res.json(debugFeed()));
+app.get('/debug/catalog', (req, res) => debugAuth(req, res) && res.json(debugSearch(String(req.query.q || ''), Math.min(Number(req.query.limit) || 10, 30))));
+app.get('/debug/families', (req, res) => debugAuth(req, res) && res.json(debugFamilies()));
+
+// Instagram'ın alabilmesi için katalogdaki webp görselleri JPEG olarak sunar (yalnızca katalogda kayıtlı görseller)
+app.get('/img/:file', async (req, res) => {
+  try {
+    const img = await serveImage(req.params.file.replace(/\.jpg$/i, ''));
+    if (!img) return res.sendStatus(404);
+    res.set('Content-Type', img.mediaType).set('Cache-Control', 'public, max-age=86400').send(img.buf);
+  } catch (e) {
+    console.error('[img]', e.message);
+    res.sendStatus(502);
+  }
+});
 
 // Webhook doğrulama (Meta panelinde "Doğrula ve Kaydet")
 app.get('/webhook', (req, res) => {
@@ -79,7 +104,7 @@ async function processMessage(event) {
         imageUrl: image?.payload?.url,
         send: {
           text: (t) => ig.sendText(senderId, t),
-          image: (u) => ig.sendImage(senderId, u),
+          image: (u) => ig.sendImage(senderId, instagramImageUrl(u)),
         },
       });
       if (reply) await ig.sendText(senderId, reply);
@@ -131,6 +156,7 @@ app.post('/webhook', (req, res) => {
   }
 });
 
+await initImages(); // sharp (webp -> jpeg) hazır olsun, sonra katalog ve görsel hafıza yüklensin
 startCatalogRefresh();
 startSiteRefresh();
 
