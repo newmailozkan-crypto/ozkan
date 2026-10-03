@@ -1,6 +1,7 @@
 import { cfg } from './config.js';
 import { decodeEntities, stripTags } from './util.js';
 import { parseProductPage, scrapeSite } from './scrape.js';
+import { httpGet } from './http.js';
 
 // Site yedeği: XML okunamazsa ürünler WooCommerce sitesinden okunur.
 //  1) WooCommerce Store API (/wp-json/wc/store/v1/products): ad, fiyat, görsel, açıklama, numara listesi (tüm ürünler, sayfa sayfa)
@@ -8,7 +9,6 @@ import { parseProductPage, scrapeSite } from './scrape.js';
 //  3) Store API kapalıysa scrape.js kategori sayfalarını gezip ürün sayfalarını okur
 // Çıktı, catalog.js'in beklediği düz ürün nesneleridir (renk bazında, bedenleri içinde).
 
-const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; ig-satis-botu/1.0)' };
 const SIZE_ATTR = /numara|beden|size/i;
 
 const originOf = (u) => {
@@ -19,11 +19,7 @@ const originOf = (u) => {
   }
 };
 
-async function get(url, accept) {
-  const res = await fetch(url, { headers: { ...UA, Accept: accept }, signal: AbortSignal.timeout(30000) });
-  if (!res.ok) throw new Error(`HTTP ${res.status} (${url})`);
-  return res.text();
-}
+const get = async (url, accept) => (await httpGet(url, { accept })).text;
 
 // Aynı anda en fazla n iş; sonuç sırası korunur
 async function pool(items, n, fn) {

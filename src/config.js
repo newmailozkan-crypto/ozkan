@@ -42,6 +42,7 @@ export const cfg = {
   catalogSource: (env.CATALOG_SOURCE || 'auto').toLowerCase(),
   // Siteden ürün çekme için kategori sayfası (WooCommerce). Sayfalama /page/2/ biçiminde izlenir.
   siteCatalogUrl: env.SITE_CATALOG_URL || '',
+  fallbackFile: env.CATALOG_FALLBACK_FILE || 'data/feed.xml',
   siteProductPath: env.SITE_PRODUCT_PATH || '/product/',
   // Instagram DM'de webp destekleniyor; yine de gerekirse JPEG'e çevirmek için true yapılabilir
   convertWebp: String(env.CONVERT_WEBP || '').toLowerCase() === 'true',

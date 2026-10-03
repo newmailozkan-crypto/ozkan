@@ -3,6 +3,10 @@ import { cfg } from './config.js';
 import { getVisual, indexVisuals, visualCount } from './visualIndex.js';
 import { parsePrice, decodeEntities } from './util.js';
 import { fetchSiteProducts } from './siteCatalog.js';
+import { httpGet } from './http.js';
+import { sendTelegram } from './telegram.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 export { parsePrice };
 
@@ -372,16 +376,44 @@ export function fromSite(list) {
 
 let lastSource = '';
 let retryTimer = null;
+let inflight = null;
+let attempts = []; // son denemelerin kaydı (debug/status için)
+let lastEnsure = 0;
+let alertState = { okSent: false, lastFailAlert: 0 };
+
+export const BOT_VERSION = '2.1-katalog-saglam';
+
+const note = (kaynak, ok, detay) => {
+  attempts.unshift({ zaman: new Date().toISOString(), kaynak, ok, detay: String(detay).slice(0, 400) });
+  attempts = attempts.slice(0, 12);
+};
+
+async function alert(text) {
+  if (!cfg.tgToken || !cfg.tgChatId) return;
+  try {
+    await sendTelegram(text);
+  } catch (e) {
+    console.error('[catalog] Telegram uyarısı gönderilemedi:', e.message);
+  }
+}
 
 async function loadFromXml() {
-  const res = await fetch(cfg.feedUrl, { headers: { 'User-Agent': 'ig-satis-botu/1.0' } });
-  if (!res.ok) throw new Error(`Feed HTTP ${res.status}`);
-  const list = parseFeed(await res.text());
-  if (!list.length) throw new Error('Feed ayrıştırıldı ama ürün bulunamadı (alan adlarını kontrol edin)');
+  const { text } = await httpGet(cfg.feedUrl, { accept: 'application/xml,text/xml,*/*' });
+  const list = parseFeed(text);
+  if (!list.length) throw new Error('Feed indirildi ama ürün bulunamadı (alan adlarını kontrol edin)');
   return list;
 }
 
-export async function refreshCatalog() {
+// Canlı kaynaklar çalışmazsa data/feed.xml (elle yüklenen kopya) okunur
+async function loadFromFile() {
+  const file = path.resolve(cfg.fallbackFile || 'data/feed.xml');
+  const text = await fs.readFile(file, 'utf8');
+  const list = parseFeed(text);
+  if (!list.length) throw new Error(`${file} içinde ürün bulunamadı`);
+  return list;
+}
+
+async function doRefresh() {
   const mode = cfg.catalogSource; // auto | xml | site
   const errors = [];
   let list = null;
@@ -391,8 +423,10 @@ export async function refreshCatalog() {
     try {
       list = await loadFromXml();
       source = 'xml';
+      note('xml', true, `${list.length} ürün`);
     } catch (e) {
       errors.push(`XML: ${e.message}`);
+      note('xml', false, e.message);
       console.error('[catalog] XML okunamadı:', e.message);
     }
   }
@@ -404,22 +438,39 @@ export async function refreshCatalog() {
       lastItemCount = r.list.length;
       lastRawSample = [];
       if (!list.length) throw new Error('Siteden ürün okunamadı');
+      note('site', true, `${list.length} ürün (${r.how})`);
     } catch (e) {
       list = null;
       errors.push(`Site: ${e.message}`);
+      note('site', false, e.message);
       console.error('[catalog] siteden okunamadı:', e.message);
+    }
+  }
+  if (!list) {
+    try {
+      list = await loadFromFile();
+      source = 'dosya (data/feed.xml, stok güncel olmayabilir)';
+      note('dosya', true, `${list.length} ürün`);
+    } catch (e) {
+      list = null;
+      if (e.code !== 'ENOENT') errors.push(`Dosya: ${e.message}`);
+      note('dosya', false, e.code === 'ENOENT' ? 'data/feed.xml yok' : e.message);
     }
   }
 
   if (!list) {
     lastError = errors.join(' | ') || 'Katalog kaynağı tanımlı değil';
-    // hiç ürün yokken 5 dakika sonra tekrar dene; ürün varsa eski veri korunur, sonraki turda yenilenir
     if (!products.length && !retryTimer) {
       retryTimer = setTimeout(() => {
         retryTimer = null;
         refreshCatalog();
       }, 5 * 60 * 1000);
       retryTimer.unref?.();
+    }
+    if (Date.now() - alertState.lastFailAlert > 3 * 3600 * 1000) {
+      alertState.lastFailAlert = Date.now();
+      alertState.okSent = false;
+      alert(`⚠️ KATALOG YÜKLENEMEDİ (${BOT_VERSION})\nBot şu an ürün/stok bilgisi veremiyor${products.length ? ' (eski veri kullanılıyor)' : ''}.\n\n${lastError}\n\nÇözüm: data/feed.xml dosyasını GitHub'a yükleyin veya sitenizde Render IP'lerine izin verin.`);
     }
     return;
   }
@@ -431,10 +482,56 @@ export async function refreshCatalog() {
   console.log(
     `[catalog] kaynak: ${source} | ${lastItemCount} kayıt -> ${list.length} renk/ürün, ${new Set(list.map((p) => p.modelKey)).size} model (${list.filter((p) => p.inStock).length} stokta)`
   );
-  // Yeni ürün görsellerini arka planda tanımla, bitince bellekteki ürünlere işle
+  if (!alertState.okSent) {
+    alertState.okSent = true;
+    alert(`✅ Katalog yüklendi (${BOT_VERSION})\nKaynak: ${source}\n${list.length} renk/ürün, ${new Set(list.map((p) => p.modelKey)).size} model, ${list.filter((p) => p.inStock).length} stokta.${errors.length ? `\nNot: ${errors.join(' | ').slice(0, 500)}` : ''}`);
+  }
   indexVisuals(list.map((p) => p.images[0]))
     .then((n) => n && attachVisuals())
     .catch((e) => console.error('[visual]', e.message));
+}
+
+// Aynı anda tek yenileme çalışır; diğer çağıranlar aynı sonucu bekler
+export function refreshCatalog() {
+  if (!inflight) {
+    inflight = doRefresh()
+      .catch((e) => {
+        lastError = e.message;
+        console.error('[catalog] yenileme hatası:', e);
+      })
+      .finally(() => {
+        inflight = null;
+      });
+  }
+  return inflight;
+}
+
+export const isEmpty = () => products.length === 0;
+
+// Katalog boşken (ör. açılışta yükleme başarısız) mesaj gelince en fazla 20 sn bekleyerek yeniden dener
+export async function ensureLoaded() {
+  if (products.length) return true;
+  if (!inflight && Date.now() - lastEnsure > 60 * 1000) {
+    lastEnsure = Date.now();
+    refreshCatalog();
+  }
+  if (inflight) await Promise.race([inflight, new Promise((r) => setTimeout(r, 20000))]);
+  return products.length > 0;
+}
+
+export function debugStatus() {
+  return {
+    version: BOT_VERSION,
+    catalog: catalogStatus(),
+    attempts,
+    config: {
+      catalogSource: cfg.catalogSource,
+      feedHost: (() => { try { return new URL(cfg.feedUrl).host; } catch { return cfg.feedUrl ? 'geçersiz URL' : 'TANIMSIZ'; } })(),
+      siteCatalogUrl: cfg.siteCatalogUrl || 'TANIMSIZ',
+      fallbackFile: cfg.fallbackFile,
+      telegramAyarli: Boolean(cfg.tgToken && cfg.tgChatId),
+    },
+  };
 }
 
 export function startCatalogRefresh() {

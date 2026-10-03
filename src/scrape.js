@@ -1,4 +1,5 @@
 import { cfg } from './config.js';
+import { httpGet } from './http.js';
 
 // Yedek kaynak: WooCommerce sitesinden ürünleri okur (XML okunamazsa).
 //  1) Kategori sayfasını /page/2/, /page/3/ ... diye gezip ürün sayfası linklerini toplar.
@@ -20,9 +21,7 @@ const decode = (s) =>
 const stripTags = (s) => decode(String(s || '').replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
 
 async function getHtml(url) {
-  const res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(25000) });
-  if (!res.ok) throw new Error(`HTTP ${res.status} (${url})`);
-  return res.text();
+  return (await httpGet(url, { accept: 'text/html,application/xhtml+xml', timeoutMs: 25000 })).text;
 }
 
 // ---------- kategori sayfası ----------
