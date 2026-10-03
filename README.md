@@ -140,3 +140,6 @@ Kod Google Merchant / Facebook feed'i, ve `<Product>…<Variants><Variant><Size>
 - Sitenizde 403 görürseniz: güvenlik duvarında Render çıkış IP'lerine izin verin veya `/wp-content/uploads/woo-product-feed-pro/*` ile `/wp-json/wc/store/*` yollarını bot korumasından hariç tutun; ya da `data/feed.xml` yükleyin.
 - Katalog boşken bot "ürün yok" demez; ekibe haber verir ve müşteriden iletişim bilgisi alır.
 - Müşteri görseli eşleşince (güven ≥ %45) ürün/diğer renk/benzer model fotoğrafları sunucu tarafından otomatik gönderilir. `npm test` üç test dosyasını çalıştırır.
+
+## Cloudflare engelliyorsa: WordPress'ten aktarım
+`wordpress/katalog-gonder.php` snippet'i sitenin kendi sunucusundan, saatte bir XML değiştiyse Render'a gönderir (`/catalog/push`). Render'da `CATALOG_PUSH_KEY` tanımlayın, snippet'teki 3 sabiti doldurun. Cloudflare ayarına dokunmak gerekmez.

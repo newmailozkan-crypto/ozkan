@@ -1,7 +1,8 @@
 import express from 'express';
+import crypto from 'node:crypto';
 import { cfg, checkConfig } from './src/config.js';
 import * as ig from './src/instagram.js';
-import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, BOT_VERSION } from './src/catalog.js';
+import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, BOT_VERSION, pushFeed, pushState } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
 import { handleDirectMessage, handleComment, setUsername } from './src/ai.js';
 import { initImages, instagramImageUrl, serveImage } from './src/images.js';
@@ -22,6 +23,24 @@ app.use(
 
 app.get('/', (_req, res) => res.send('Instagram satış botu çalışıyor ✅'));
 app.get('/health', (_req, res) => res.json({ ok: true, version: BOT_VERSION, catalog: catalogStatus(), site: siteStatus() }));
+
+// WordPress -> bot ürün aktarımı (Cloudflare bot korumasını kapatmadan çalışır). Anahtar: CATALOG_PUSH_KEY
+const pushAuth = (req, res) => {
+  const key = req.get('x-push-key') || '';
+  if (!cfg.pushKey) return res.status(404).send('push kapalı (CATALOG_PUSH_KEY tanımlı değil)') && false;
+  if (key.length !== cfg.pushKey.length || !crypto.timingSafeEqual(Buffer.from(key), Buffer.from(cfg.pushKey))) return res.sendStatus(403) && false;
+  return true;
+};
+app.get('/catalog/state', (req, res) => pushAuth(req, res) && res.json(pushState()));
+app.post('/catalog/push', express.text({ type: '*/*', limit: '80mb' }), (req, res) => {
+  if (!pushAuth(req, res)) return;
+  try {
+    res.json({ ok: true, ...pushFeed(String(req.body || ''), req.get('x-feed-hash') || '') });
+  } catch (e) {
+    console.error('[push]', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
 
 // Teşhis: botun XML'den ne okuduğunu gösterir. Erişim için ?key=IG_VERIFY_TOKEN gerekir.
 const debugAuth = (req, res) => {

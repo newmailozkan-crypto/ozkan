@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { cfg } from './src/config.js';
-import { refreshCatalog, catalogStatus, isEmpty, setProducts, allProducts } from './src/catalog.js';
+import { refreshCatalog, catalogStatus, isEmpty, setProducts, allProducts, pushFeed, pushState } from './src/catalog.js';
 
 let fail = 0;
 const ok = (c, m) => { console.log(c ? 'OK  ' : 'FAIL', m); if (!c) fail++; };
@@ -38,6 +38,16 @@ cfg.catalogSource = 'auto';
 cfg.tgToken = 't'; cfg.tgChatId = '1';
 cfg.fallbackFile = path.join(os.tmpdir(), `feed-${Date.now()}.xml`);
 
+// ---------- 0) gizli anahtar sızıntısı ve geçersiz adres ----------
+{
+  const { redact } = await import('./src/util.js');
+  ok(!/sk-ant-usr-11FAZ/.test(redact('hata (sk-ant-usr-11FAZzxcoPMnKfN4wddyn784Ir1zFEP-tbW5noPI): x')), 'API anahtarı Telegram/loglardan maskelenir');
+  const { httpGet } = await import('./src/http.js');
+  let msg = '';
+  try { await httpGet('sk-ant-usr-11FAZzxcoPMnKfN4wddyn784Ir1zFEP'); } catch (e) { msg = e.message; }
+  ok(/Geçersiz adres/.test(msg) && !/sk-ant/.test(msg), 'geçersiz PRODUCT_FEED_URL net hata verir ve değeri yazmaz');
+}
+
 // ---------- 1) her şey engelli, dosya da yok ----------
 await refreshCatalog();
 ok(isEmpty(), 'her kaynak 403 verir, dosya yok -> katalog boş');
@@ -57,6 +67,21 @@ await refreshCatalog();
 ok(catalogStatus().source === 'xml', `XML erişilebilirken canlı XML: ${catalogStatus().source}`);
 const bej = allProducts().find((p) => p.title === 'Tazz Bej');
 ok(bej && bej.sizes.length === 3, 'Tazz Bej 36/37/38 okundu');
+
+// ---------- 3b) WordPress push: Cloudflare engelliyken veri sunucudan gelir ----------
+mode = 'blocked';
+setProducts([]);
+const r0 = pushFeed(FEED, 'abc123');
+ok(r0.count === 4 && !isEmpty() && catalogStatus().source === 'push (WordPress)' && pushState().hash === 'abc123', 'push: XML yüklendi, hash kaydedildi');
+fs.writeFileSync(cfg.fallbackFile, feed([item('x-1', 'eski', 'Eski Model', 40)]));
+await refreshCatalog();
+ok(allProducts().length === 4 && catalogStatus().source === 'push (WordPress)', 'canlı kaynaklar 403 iken taze push verisi eski dosyayla ezilmedi');
+fs.unlinkSync(cfg.fallbackFile);
+let bad = false;
+try { pushFeed('<rss></rss>'); } catch { bad = true; }
+ok(bad && allProducts().length === 4, 'boş/hatalı XML push edilirse mevcut katalog korunur');
+mode = 'xml';
+await refreshCatalog();
 
 // ---------- sahte Claude ----------
 const { handleDirectMessage } = await import('./src/ai.js');
