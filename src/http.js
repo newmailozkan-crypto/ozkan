@@ -3,6 +3,8 @@
 // - Geçici hatalarda (bağlantı, 429, 5xx) kısa beklemeyle yeniden dener
 // - Engellenirse hatayı AÇIKÇA yazar (durum kodu, güvenlik duvarı ipucu, sayfanın ilk satırı), böylece neden anlaşılır
 
+import { redact } from './util.js';
+
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const RETRY_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -17,7 +19,17 @@ function snippet(body) {
   return String(body).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
+function validUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export async function httpGet(url, { accept = '*/*', timeoutMs = 30000, retries = 2 } = {}) {
+  if (!validUrl(url)) throw new Error('Geçersiz adres: PRODUCT_FEED_URL / SITE_CATALOG_URL değeri https:// ile başlayan bir bağlantı olmalı (Render ortam değişkenlerini kontrol edin; yanlışlıkla başka bir değer yapıştırılmış olabilir)');
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     let res;
@@ -35,7 +47,7 @@ export async function httpGet(url, { accept = '*/*', timeoutMs = 30000, retries 
         await sleep(1500 * (attempt + 1));
         continue;
       }
-      throw lastErr;
+      throw new Error(redact(lastErr.message));
     }
     if (res.ok) return { text: body, headers: res.headers, status: res.status };
 

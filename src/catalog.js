@@ -5,6 +5,7 @@ import { parsePrice, decodeEntities } from './util.js';
 import { fetchSiteProducts } from './siteCatalog.js';
 import { httpGet } from './http.js';
 import { sendTelegram } from './telegram.js';
+import { redact } from './util.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -379,12 +380,13 @@ let retryTimer = null;
 let inflight = null;
 let attempts = []; // son denemelerin kaydı (debug/status için)
 let lastEnsure = 0;
+let pushed = { at: 0, hash: '', count: 0 };
 let alertState = { okSent: false, lastFailAlert: 0 };
 
 export const BOT_VERSION = '2.1-katalog-saglam';
 
 const note = (kaynak, ok, detay) => {
-  attempts.unshift({ zaman: new Date().toISOString(), kaynak, ok, detay: String(detay).slice(0, 400) });
+  attempts.unshift({ zaman: new Date().toISOString(), kaynak, ok, detay: redact(detay).slice(0, 400) });
   attempts = attempts.slice(0, 12);
 };
 
@@ -446,7 +448,8 @@ async function doRefresh() {
       console.error('[catalog] siteden okunamadı:', e.message);
     }
   }
-  if (!list) {
+  const pushFresh = pushed.at && Date.now() - pushed.at < 6 * 3600 * 1000 && products.length > 0;
+  if (!list && !pushFresh) {
     try {
       list = await loadFromFile();
       source = 'dosya (data/feed.xml, stok güncel olmayabilir)';
@@ -459,7 +462,7 @@ async function doRefresh() {
   }
 
   if (!list) {
-    lastError = errors.join(' | ') || 'Katalog kaynağı tanımlı değil';
+    lastError = redact(errors.join(' | ')) || 'Katalog kaynağı tanımlı değil';
     if (!products.length && !retryTimer) {
       retryTimer = setTimeout(() => {
         retryTimer = null;
@@ -467,7 +470,7 @@ async function doRefresh() {
       }, 5 * 60 * 1000);
       retryTimer.unref?.();
     }
-    if (Date.now() - alertState.lastFailAlert > 3 * 3600 * 1000) {
+    if (!pushFresh && Date.now() - alertState.lastFailAlert > 3 * 3600 * 1000) {
       alertState.lastFailAlert = Date.now();
       alertState.okSent = false;
       alert(`⚠️ KATALOG YÜKLENEMEDİ (${BOT_VERSION})\nBot şu an ürün/stok bilgisi veremiyor${products.length ? ' (eski veri kullanılıyor)' : ''}.\n\n${lastError}\n\nÇözüm: data/feed.xml dosyasını GitHub'a yükleyin veya sitenizde Render IP'lerine izin verin.`);
@@ -506,6 +509,28 @@ export function refreshCatalog() {
   return inflight;
 }
 
+// WordPress'in gönderdiği XML'i yükler (Cloudflare'i aşmak için sunucu -> bot yönünde aktarım)
+export function pushFeed(xml, hash = '') {
+  const list = parseFeed(xml);
+  if (!list.length) throw new Error('Gönderilen XML içinde ürün bulunamadı');
+  setProductsInternal(list);
+  lastUpdated = new Date();
+  lastSource = 'push (WordPress)';
+  lastError = null;
+  pushed = { at: Date.now(), hash, count: list.length };
+  console.log(`[catalog] push: ${list.length} renk/ürün, ${new Set(list.map((p) => p.modelKey)).size} model (${list.filter((p) => p.inStock).length} stokta)`);
+  if (!alertState.okSent) {
+    alertState.okSent = true;
+    alert(`✅ Katalog yüklendi (${BOT_VERSION})\nKaynak: WordPress push\n${list.length} renk/ürün, ${new Set(list.map((p) => p.modelKey)).size} model, ${list.filter((p) => p.inStock).length} stokta.`);
+  }
+  indexVisuals(list.map((p) => p.images[0]))
+    .then((n) => n && attachVisuals())
+    .catch((e) => console.error('[visual]', e.message));
+  return { count: list.length, models: new Set(list.map((p) => p.modelKey)).size };
+}
+
+export const pushState = () => ({ hash: pushed.hash, count: pushed.count, at: pushed.at });
+
 export const isEmpty = () => products.length === 0;
 
 // Katalog boşken (ör. açılışta yükleme başarısız) mesaj gelince en fazla 20 sn bekleyerek yeniden dener
@@ -526,7 +551,7 @@ export function debugStatus() {
     attempts,
     config: {
       catalogSource: cfg.catalogSource,
-      feedHost: (() => { try { return new URL(cfg.feedUrl).host; } catch { return cfg.feedUrl ? 'geçersiz URL' : 'TANIMSIZ'; } })(),
+      feedHost: (() => { try { return new URL(cfg.feedUrl).host; } catch { return cfg.feedUrl ? 'GEÇERSİZ (https:// ile başlamıyor)' : 'TANIMSIZ'; } })(),
       siteCatalogUrl: cfg.siteCatalogUrl || 'TANIMSIZ',
       fallbackFile: cfg.fallbackFile,
       telegramAyarli: Boolean(cfg.tgToken && cfg.tgChatId),

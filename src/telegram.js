@@ -1,10 +1,11 @@
 import { cfg } from './config.js';
+import { redact } from './util.js';
 
 export async function sendTelegram(text) {
   const res = await fetch(`https://api.telegram.org/bot${cfg.tgToken}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: cfg.tgChatId, text, disable_web_page_preview: true }),
+    body: JSON.stringify({ chat_id: cfg.tgChatId, text: redact(text), disable_web_page_preview: true }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.ok) throw new Error(`Telegram hata: ${data.description || res.status}`);

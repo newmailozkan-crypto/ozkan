@@ -42,6 +42,8 @@ export const cfg = {
   catalogSource: (env.CATALOG_SOURCE || 'auto').toLowerCase(),
   // Siteden ürün çekme için kategori sayfası (WooCommerce). Sayfalama /page/2/ biçiminde izlenir.
   siteCatalogUrl: env.SITE_CATALOG_URL || '',
+  // WordPress'ten ürün XML'ini sunucuya iten uç nokta için gizli anahtar (boşsa uç nokta kapalı)
+  pushKey: env.CATALOG_PUSH_KEY || '',
   fallbackFile: env.CATALOG_FALLBACK_FILE || 'data/feed.xml',
   siteProductPath: env.SITE_PRODUCT_PATH || '/product/',
   // Instagram DM'de webp destekleniyor; yine de gerekirse JPEG'e çevirmek için true yapılabilir
@@ -66,6 +68,8 @@ export function checkConfig() {
     .filter(([, v]) => !v)
     .map(([k]) => k);
   if (missing.length) console.warn('[config] Eksik ortam değişkenleri:', missing.join(', '));
+  if (cfg.feedUrl && !/^https?:\/\//i.test(cfg.feedUrl)) console.error('[config] PRODUCT_FEED_URL geçerli bir bağlantı değil (https:// ile başlamalı). Yanlış değer yapıştırılmış olabilir!');
+  if (cfg.feedUrl && /^sk-ant-/i.test(cfg.feedUrl.trim())) console.error('[config] UYARI: PRODUCT_FEED_URL içine bir API anahtarı yapıştırılmış. Anahtarı iptal edip yenisini oluşturun.');
   if (!cfg.appSecret) console.warn('[config] IG_APP_SECRET yok: webhook imza doğrulaması KAPALI.');
   return missing;
 }

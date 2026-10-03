@@ -41,3 +41,12 @@ export function parsePrice(v) {
   const n = Number(s);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
+
+// Gizli anahtarları (Anthropic, Telegram bot tokeni, Meta tokenleri) loglara/Telegram'a sızdırmamak için maskeler
+export function redact(text) {
+  return String(text ?? '')
+    .replace(/sk-ant-[A-Za-z0-9_-]{8,}/g, 'sk-ant-***')
+    .replace(/\b\d{6,}:[A-Za-z0-9_-]{30,}\b/g, '***telegram-token***')
+    .replace(/\bEAA[A-Za-z0-9]{20,}/g, '***meta-token***')
+    .replace(/\bIG[A-Za-z0-9]{40,}/g, '***ig-token***');
+}
