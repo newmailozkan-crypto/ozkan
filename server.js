@@ -2,7 +2,7 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { cfg, checkConfig } from './src/config.js';
 import * as ig from './src/instagram.js';
-import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, BOT_VERSION, pushFeed, pushState } from './src/catalog.js';
+import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
 import { handleDirectMessage, handleComment, setUsername } from './src/ai.js';
 import { initImages, instagramImageUrl, serveImage } from './src/images.js';
@@ -38,6 +38,16 @@ app.post('/catalog/push', express.text({ type: '*/*', limit: '80mb' }), (req, re
     res.json({ ok: true, ...pushFeed(String(req.body || ''), req.get('x-feed-hash') || '') });
   } catch (e) {
     console.error('[push]', e.message);
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/catalog/push-json', express.text({ type: '*/*', limit: '40mb' }), (req, res) => {
+  if (!pushAuth(req, res)) return;
+  try {
+    res.json({ ok: true, ...pushJson(String(req.body || ''), req.get('x-feed-hash') || '') });
+  } catch (e) {
+    console.error('[push-json]', e.message);
     res.status(400).json({ ok: false, error: e.message });
   }
 });

@@ -77,6 +77,17 @@ fs.writeFileSync(cfg.fallbackFile, feed([item('x-1', 'eski', 'Eski Model', 40)])
 await refreshCatalog();
 ok(allProducts().length === 4 && catalogStatus().source === 'push (WordPress)', 'canlı kaynaklar 403 iken taze push verisi eski dosyayla ezilmedi');
 fs.unlinkSync(cfg.fallbackFile);
+{
+  const { checkStale } = await import('./src/catalog.js');
+  const real = Date.now; const t0 = real();
+  cfg.pushKey = 'x'.repeat(40);
+  ok(checkStale() === false, 'taze push verisinde bayat uyarısı yok');
+  Date.now = () => t0 + 7 * 3600000;
+  const n0 = telegram.length;
+  ok(checkStale() === true && telegram.slice(n0).some((t) => /saattir haber alınamadı/.test(t)), '6 saatten uzun push gelmezse Telegram uyarısı');
+  Date.now = real;
+  cfg.pushKey = '';
+}
 let bad = false;
 try { pushFeed('<rss></rss>'); } catch { bad = true; }
 ok(bad && allProducts().length === 4, 'boş/hatalı XML push edilirse mevcut katalog korunur');

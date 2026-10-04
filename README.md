@@ -143,3 +143,11 @@ Kod Google Merchant / Facebook feed'i, ve `<Product>…<Variants><Variant><Size>
 
 ## Cloudflare engelliyorsa: WordPress'ten aktarım
 `wordpress/katalog-gonder.php` snippet'i sitenin kendi sunucusundan, saatte bir XML değiştiyse Render'a gönderir (`/catalog/push`). Render'da `CATALOG_PUSH_KEY` tanımlayın, snippet'teki 3 sabiti doldurun. Cloudflare ayarına dokunmak gerekmez.
+
+## Push modu (v2.5)
+`CATALOG_PUSH_KEY` tanımlıysa bot canlı siteye/XML'e gitmez; yalnızca WordPress'in gönderdiği veriyi kullanır. Son veri `CATALOG_STORE_FILE` yoluna yazılır; bot yeniden başlarsa oradan yüklenir. WordPress 6 saatten uzun süre ulaşmazsa Telegram'a uyarı gider, bot son bilinen stoklarla devam eder. Render'da kalıcı veri için Starter plan + Disk (Mount Path `/var/data`) önerilir; ücretsiz planda disk silinir ve bot, WordPress'in bir sonraki saatlik temasına kadar kataloğu bekler.
+
+## Canlı WooCommerce verisi (v3.0)
+`wordpress/katalog-canli.php` kod parçacığı ürünleri XML'e bağlı kalmadan doğrudan WooCommerce veritabanından okur (fiyat, numara, numara bazlı stok, görseller) ve `/catalog/push-json` adresine gönderir. Ağır işlem (ürünleri derleme) yalnızca stok/ürün değişince (60 sn içinde), bot kataloğu kaybedince veya günde 1 kez güvence olarak (CB_SAFETY_HOURS) çalışır; 5 dakikalık kontrol yalnızca botа küçük bir durum sorusudur. Bu kod parçacığı etkinken eski XML kod parçacığını kapatın (XML gönderimleri zaten yok sayılır).
+Bot uyandığında katalog boşsa mesajlara cevap vermeden en fazla `CATALOG_WAIT_MIN` (varsayılan 12) dakika WordPress'ten veri bekler; gelmezse ekibe yönlendirir.
+Test: `npm test`. `test-fixtures/woo-harness.php`, PHP kod parçacığını sahte WooCommerce ile çalıştırıp test-fixtures/woo-list.json çıktısını üretir (`php test-fixtures/woo-harness.php wordpress/katalog-canli.php test-fixtures/woo-list.json`).

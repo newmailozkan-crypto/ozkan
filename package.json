@@ -9,8 +9,8 @@
     "dev": "node --env-file=.env server.js",
     "test:feed": "node test-feed.js",
     "test:site": "node test-site.js",
-    "test:bot": "node test-bot.js",
-    "test": "node test-feed.js && node test-site.js && node test-bot.js"
+    "test:bot": "node test-bot.js && node test-push.js",
+    "test": "node test-feed.js && node test-site.js && node test-bot.js && node test-push.js"
   },
   "engines": {
     "node": ">=20"
