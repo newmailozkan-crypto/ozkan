@@ -44,6 +44,10 @@ export const cfg = {
   siteCatalogUrl: env.SITE_CATALOG_URL || '',
   // WordPress'ten ürün XML'ini sunucuya iten uç nokta için gizli anahtar (boşsa uç nokta kapalı)
   pushKey: env.CATALOG_PUSH_KEY || '',
+  // WordPress'ten gelen son veri buraya yazılır; bot yeniden başlarsa buradan okur. Kalıcı disk bağlıysa yolu oraya verin (örn. /var/data/last-push.xml)
+  storeFile: env.CATALOG_STORE_FILE || 'data/last-push.dat',
+  // Katalog boşken (ör. uyku sonrası) mesajlar bu kadar dakika boyunca WordPress'ten veri beklenir; gelmezse ekibe yönlendirilir
+  catalogWaitMin: Number(env.CATALOG_WAIT_MIN || 12),
   fallbackFile: env.CATALOG_FALLBACK_FILE || 'data/feed.xml',
   siteProductPath: env.SITE_PRODUCT_PATH || '/product/',
   // Instagram DM'de webp destekleniyor; yine de gerekirse JPEG'e çevirmek için true yapılabilir

@@ -381,9 +381,13 @@ let inflight = null;
 let attempts = []; // son denemelerin kaydı (debug/status için)
 let lastEnsure = 0;
 let pushed = { at: 0, hash: '', count: 0 };
+let lastJsonAt = 0; // WooCommerce'ten canlı (JSON) veri gelen son an; varken XML push'ları yok sayılır
+let waiters = [];
+const wake = () => { const w = waiters; waiters = []; w.forEach((r) => r()); };
+let lastContact = Date.now(); // WordPress'in bota en son ulaştığı an (state sorgusu veya push)
 let alertState = { okSent: false, lastFailAlert: 0 };
 
-export const BOT_VERSION = '2.1-katalog-saglam';
+export const BOT_VERSION = '3.0-canli-woo';
 
 const note = (kaynak, ok, detay) => {
   attempts.unshift({ zaman: new Date().toISOString(), kaynak, ok, detay: redact(detay).slice(0, 400) });
@@ -415,7 +419,80 @@ async function loadFromFile() {
   return list;
 }
 
+const isPushMode = () => cfg.catalogSource === 'push' || (cfg.catalogSource === 'auto' && Boolean(cfg.pushKey));
+
+async function persistPush(xml, meta) {
+  try {
+    const file = path.resolve(cfg.storeFile);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(`${file}.tmp`, xml);
+    await fs.rename(`${file}.tmp`, file);
+    await fs.writeFile(`${file}.json`, JSON.stringify(meta));
+  } catch (e) {
+    console.error('[catalog] son push verisi diske yazılamadı:', e.message);
+  }
+}
+
+// Push modu: canlı siteye gitmez. Bellekte veri varsa dokunmaz; yoksa diskteki SON WordPress verisini yükler.
+async function loadStored() {
+  const file = path.resolve(cfg.storeFile);
+  const raw = await fs.readFile(file, 'utf8');
+  const isJson = /^\s*[\[{]/.test(raw);
+  const list = isJson ? fromSite(JSON.parse(raw)) : parseFeed(raw);
+  if (!list.length) throw new Error('kayıtlı veri boş');
+  let meta = {};
+  try {
+    meta = JSON.parse(await fs.readFile(`${file}.json`, 'utf8'));
+  } catch {
+    /* meta yoksa sorun değil */
+  }
+  return { list, meta };
+}
+
+async function doPushRefresh() {
+  if (products.length) return;
+  try {
+    const { list, meta } = await loadStored();
+    setProductsInternal(list);
+    lastUpdated = new Date();
+    lastSource = 'son WordPress verisi (diskten)';
+    lastError = null;
+    pushed = { at: meta.at || 0, hash: meta.hash || '', count: list.length };
+    if (meta.format === 'json') lastJsonAt = meta.at || Date.now();
+    wake();
+    note('disk', true, `${list.length} ürün`);
+    console.log(`[catalog] diskten son WordPress verisi yüklendi: ${list.length} renk/ürün`);
+    if (!alertState.okSent) {
+      alertState.okSent = true;
+      alert(`✅ Katalog son WordPress verisiyle yüklendi (${BOT_VERSION})\n${list.length} renk/ürün, ${new Set(list.map((p) => p.modelKey)).size} model.\nBot, WordPress'ten yeni veri gelene kadar bu stoklarla devam eder.`);
+    }
+    indexVisuals(list.map((p) => p.images[0]))
+      .then((n) => n && attachVisuals())
+      .catch((e) => console.error('[visual]', e.message));
+    return;
+  } catch (e) {
+    note('disk', false, e.code === 'ENOENT' ? 'kayıtlı WordPress verisi yok' : e.message);
+  }
+  try {
+    const list = await loadFromFile();
+    setProductsInternal(list);
+    lastUpdated = new Date();
+    lastSource = 'dosya (data/feed.xml)';
+    note('dosya', true, `${list.length} ürün`);
+    wake();
+    return;
+  } catch {
+    /* dosya yok */
+  }
+  lastError = "Henüz WordPress'ten ürün verisi gelmedi (kod parçacığı etkin mi? ?cb_push=1 adresi HTTP 200 veriyor mu?)";
+  if (Date.now() - alertState.lastFailAlert > 3 * 3600 * 1000) {
+    alertState.lastFailAlert = Date.now();
+    alert(`⚠️ Katalog boş (${BOT_VERSION}). WordPress'ten henüz ürün verisi gelmedi.\n${lastError}`);
+  }
+}
+
 async function doRefresh() {
+  if (isPushMode()) return doPushRefresh();
   const mode = cfg.catalogSource; // auto | xml | site
   const errors = [];
   let list = null;
@@ -511,6 +588,7 @@ export function refreshCatalog() {
 
 // WordPress'in gönderdiği XML'i yükler (Cloudflare'i aşmak için sunucu -> bot yönünde aktarım)
 export function pushFeed(xml, hash = '') {
+  if (lastJsonAt && Date.now() - lastJsonAt < 24 * 3600 * 1000) return { ignored: true, count: products.length, note: 'WooCommerce canlı verisi aktif; XML gönderimi yok sayıldı. Eski XML kod parçacığını kapatın.' };
   const list = parseFeed(xml);
   if (!list.length) throw new Error('Gönderilen XML içinde ürün bulunamadı');
   setProductsInternal(list);
@@ -518,6 +596,9 @@ export function pushFeed(xml, hash = '') {
   lastSource = 'push (WordPress)';
   lastError = null;
   pushed = { at: Date.now(), hash, count: list.length };
+  lastContact = Date.now();
+  persistPush(xml, { at: pushed.at, hash, format: 'xml' });
+  wake();
   console.log(`[catalog] push: ${list.length} renk/ürün, ${new Set(list.map((p) => p.modelKey)).size} model (${list.filter((p) => p.inStock).length} stokta)`);
   if (!alertState.okSent) {
     alertState.okSent = true;
@@ -529,11 +610,48 @@ export function pushFeed(xml, hash = '') {
   return { count: list.length, models: new Set(list.map((p) => p.modelKey)).size };
 }
 
-export const pushState = () => ({ hash: pushed.hash, count: pushed.count, at: pushed.at });
+// WooCommerce'ten (veritabanından) canlı gönderilen ürün listesi (JSON). XML'e bağlı değildir.
+export function pushJson(text, hash = '') {
+  let arr;
+  try {
+    arr = JSON.parse(text);
+  } catch {
+    throw new Error('Geçersiz JSON');
+  }
+  if (!Array.isArray(arr)) throw new Error('Ürün listesi dizi olmalı');
+  const list = fromSite(arr);
+  if (!list.length) throw new Error('Gönderilen listede geçerli ürün yok');
+  setProductsInternal(list);
+  lastUpdated = new Date();
+  lastSource = 'push (WooCommerce canlı)';
+  lastError = null;
+  lastItemCount = arr.length;
+  pushed = { at: Date.now(), hash, count: list.length };
+  lastJsonAt = pushed.at;
+  lastContact = pushed.at;
+  persistPush(text, { at: pushed.at, hash, format: 'json' });
+  wake();
+  console.log(`[catalog] woo push: ${arr.length} ürün -> ${list.length} renk/ürün, ${new Set(list.map((p) => p.modelKey)).size} model (${list.filter((p) => p.inStock).length} stokta)`);
+  if (!alertState.okSent) {
+    alertState.okSent = true;
+    alert(`✅ Katalog yüklendi (${BOT_VERSION})\nKaynak: WooCommerce canlı veri\n${list.length} renk/ürün, ${new Set(list.map((p) => p.modelKey)).size} model, ${list.filter((p) => p.inStock).length} stokta.`);
+  }
+  indexVisuals(list.map((p) => p.images[0]))
+    .then((n) => n && attachVisuals())
+    .catch((e) => console.error('[visual]', e.message));
+  return { count: list.length, models: new Set(list.map((p) => p.modelKey)).size };
+}
+
+// WordPress her sorguladığında 'hayattayım' sinyali sayılır
+export const pushState = () => {
+  lastContact = Date.now();
+  return { hash: pushed.hash, count: pushed.count, at: pushed.at };
+};
 
 export const isEmpty = () => products.length === 0;
 
-// Katalog boşken (ör. açılışta yükleme başarısız) mesaj gelince en fazla 20 sn bekleyerek yeniden dener
+// Katalog boşsa (ör. uyku/yeniden başlatma sonrası) önce diskten dener; yoksa WordPress'ten gelecek veriyi BEKLER,
+// böylece bot eksik bilgiyle cevap vermez. Push modunda en fazla CATALOG_WAIT_MIN dakika, değilse 20 sn bekler.
 export async function ensureLoaded() {
   if (products.length) return true;
   if (!inflight && Date.now() - lastEnsure > 60 * 1000) {
@@ -541,6 +659,16 @@ export async function ensureLoaded() {
     refreshCatalog();
   }
   if (inflight) await Promise.race([inflight, new Promise((r) => setTimeout(r, 20000))]);
+  if (products.length) return true;
+  if (isPushMode()) {
+    const ms = Math.max(0, cfg.catalogWaitMin) * 60 * 1000;
+    console.log(`[catalog] katalog boş, WordPress'ten veri bekleniyor (en fazla ${cfg.catalogWaitMin} dk)`);
+    await new Promise((resolve) => {
+      const t = setTimeout(resolve, ms);
+      t.unref?.();
+      waiters.push(() => { clearTimeout(t); resolve(); });
+    });
+  }
   return products.length > 0;
 }
 
@@ -554,12 +682,30 @@ export function debugStatus() {
       feedHost: (() => { try { return new URL(cfg.feedUrl).host; } catch { return cfg.feedUrl ? 'GEÇERSİZ (https:// ile başlamıyor)' : 'TANIMSIZ'; } })(),
       siteCatalogUrl: cfg.siteCatalogUrl || 'TANIMSIZ',
       fallbackFile: cfg.fallbackFile,
+      pushModu: isPushMode(),
+      canliWoo: Boolean(lastJsonAt),
+      storeFile: cfg.storeFile,
+      wordpressSonTemas: new Date(lastContact).toISOString(),
       telegramAyarli: Boolean(cfg.tgToken && cfg.tgChatId),
     },
   };
 }
 
+// WordPress uzun süre bota ulaşmazsa ekibi uyarır. Bot satışa SON BİLİNEN verilerle devam eder.
+let lastStaleAlert = 0;
+export function checkStale() {
+  if (!products.length || !isPushMode()) return false;
+  const hours = (Date.now() - lastContact) / 3600000;
+  if (hours > 6 && Date.now() - lastStaleAlert > 6 * 3600000) {
+    lastStaleAlert = Date.now();
+    alert(`⚠️ WordPress'ten ${Math.floor(hours)} saattir haber alınamadı. Bot son bilinen stoklarla satışa devam ediyor.\nKontrol: WPCode'daki kod parçacığı etkin mi, anahtar Render'daki CATALOG_PUSH_KEY ile aynı mı, ?cb_push=1 adresi HTTP 200 veriyor mu?`);
+    return true;
+  }
+  return false;
+}
+
 export function startCatalogRefresh() {
+  setInterval(checkStale, 30 * 60 * 1000).unref?.();
   refreshCatalog();
   setInterval(refreshCatalog, cfg.feedRefreshMin * 60 * 1000).unref?.();
 }
