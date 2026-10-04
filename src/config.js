@@ -59,6 +59,9 @@ export const cfg = {
   shippingFee: Number(env.SHIPPING_FEE || 100),
   whatsappUrl: env.WHATSAPP_URL || 'https://wa.me/905451348934',
   // Müşteri son mesajımızı gördüyse ve bu kadar saat cevap yazmadıysa tek seferlik hatırlatma gönderilir (0 = kapalı)
+  // Sipariş sonrası bu süre içinde müşteri iptal isterse bot doğrudan iptal eder (saat)
+  cancelWindowHours: Number(env.CANCEL_WINDOW_HOURS || 3),
+  customersFile: env.CUSTOMERS_FILE || 'data/customers.json',
   followupHours: Number(env.FOLLOWUP_HOURS ?? 6),
   // seen = sadece "görüldü" bilgisi geldiyse; any = görüldü bilgisi gelmese de son mesajımızdan itibaren
   followupMode: (env.FOLLOWUP_MODE || 'seen').toLowerCase(),

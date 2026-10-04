@@ -17,7 +17,7 @@ const tl = (n) => `${Number(n).toLocaleString('tr-TR')} TL`;
 export function formatOrder(o) {
   const lines = o.items.map((i) => `• ${i.title} | Beden: ${i.size || '-'} | ${i.qty} adet | ${tl(i.lineTotal)}`);
   return [
-    '🛍 YENİ SİPARİŞ',
+    '🛍 YENİ SİPARİŞ' + (o.id ? ` (No: ${o.id})` : ''),
     '',
     `İsim Soyisim: ${o.name}`,
     `Telefon: ${o.phone}`,
@@ -33,6 +33,7 @@ export function formatOrder(o) {
     `NİHAİ SATIŞ FİYATI (kapıda ödeme): ${tl(o.total)}`,
     '',
     `Instagram: ${o.igUsername ? '@' + o.igUsername : o.igUserId}`,
+    '🏷 Durum: SİPARİŞ VERDİ',
   ]
     .filter((l) => l !== null)
     .join('\n');
@@ -44,4 +45,29 @@ export async function notifyHuman(reason, igUserId, igUsername, lastMessage) {
       .filter(Boolean)
       .join('\n')
   );
+}
+
+export function formatCancel(o, igUsername, igUserId) {
+  return [
+    `❌ SİPARİŞ İPTAL EDİLDİ (No: ${o.id})`,
+    'Müşteri siparişi verdikten kısa süre sonra DM üzerinden iptal etti; bot iptali onayladı. Lütfen bu siparişi HAZIRLAMAYIN / kargolamayın.',
+    '',
+    `İsim Soyisim: ${o.name}`,
+    `Telefon: ${o.phone}`,
+    `İl / İlçe: ${o.city} / ${o.district}`,
+    'Ürünler: ' + o.items.map((i) => `${i.title} (${i.size})`).join('; '),
+    `Tutar: ${tl(o.total)}`,
+    `Instagram: ${igUsername ? '@' + igUsername : igUserId}`,
+  ].join('\n');
+}
+
+export async function sendTelegramPhoto(buffer, mediaType, caption) {
+  const form = new FormData();
+  form.append('chat_id', String(cfg.tgChatId));
+  form.append('caption', redact(caption || '').slice(0, 1000));
+  form.append('photo', new Blob([buffer], { type: mediaType || 'image/jpeg' }), 'memnuniyet.jpg');
+  const res = await fetch(`https://api.telegram.org/bot${cfg.tgToken}/sendPhoto`, { method: 'POST', body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) throw new Error(`Telegram fotoğraf hatası: ${data.description || res.status}`);
+  return data;
 }

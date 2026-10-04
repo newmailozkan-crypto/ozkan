@@ -4,7 +4,8 @@ import { cfg } from './config.js';
 import * as catalog from './catalog.js';
 import { siteInfoText } from './siteInfo.js';
 import { storeRulesText, priceCart } from './storeRules.js';
-import { sendTelegram, formatOrder, notifyHuman } from './telegram.js';
+import { sendTelegram, sendTelegramPhoto, formatOrder, formatCancel, notifyHuman } from './telegram.js';
+import * as customers from './customers.js';
 import { getImage } from './images.js';
 import { describeCustomerImage } from './visualIndex.js';
 
@@ -71,7 +72,7 @@ export function dueFollowups() {
   const wait = cfg.followupHours * 3600 * 1000;
   const out = [];
   for (const [userId, s] of sessions) {
-    if (s.followupSent || s.lastOrder || !s.lastUserAt || !s.lastBotAt || s.lastBotAt < s.lastUserAt) continue;
+    if (s.followupSent || s.lastOrder || customers.get(userId)?.orders.some((o) => o.status === 'aktif') || !s.lastUserAt || !s.lastBotAt || s.lastBotAt < s.lastUserAt) continue;
     if (now - s.lastUserAt > 23 * 3600 * 1000) continue; // Instagram 24 saatlik mesaj penceresi
     const since = cfg.followupMode === 'any' ? s.lastBotAt : s.seenAt;
     if (!since || now - since < wait) continue;
@@ -116,7 +117,10 @@ export async function buildFollowup(userId) {
 }
 
 export function setUsername(userId, username) {
-  if (username) getSession(userId).username = username;
+  if (username) {
+    getSession(userId).username = username;
+    customers.setUsername(userId, username);
+  }
 }
 
 // ---------- sistem istemi ----------
@@ -161,10 +165,15 @@ function staticPrompt() {
 5. Bilgiler tamamlanınca UPSELL: suggest_upsell ile müşterinin numarasında olan 5-10 farklı modeli al (fotoğrafları otomatik gönderilir) ve şunu de (kampanya tutarını GÜNCEL SİTE BİLGİSİ'nden doğrula): "Bu ürünlerden beğendiğiniz var mı? Dilerseniz bunlardan da siparişinize ekleme yapabilirim, 2'li alım yaptığınız için X TL indirim kazanıyorsunuz 🎁". Müşteri eklemek isterse yeni ürünü ekle; istemezse ısrar etme.
 5b. Upsell ve kampanya: ürün sayısı değişince calc_cart çağır; 3 ürünse 4. ürüne, sepet ücretsiz kargo baremi altındaysa birkaç ürün daha eklemeye teşvik et (calc_cart ipuçlarına bak). Sipariş vermeden önce seçilen her modelin kalıp bilgisini (kalip_notu) mutlaka söyle.
 6. Sipariş özetini (ürünler, bedenler, indirim, kargo, ödenecek toplam, adres, kapıda ödeme) müşteriye yaz ve onay al. Onay gelince submit_order çağır.
-7. submit_order başarılı olursa müşteriye teşekkür et ve şunu söyle: siparişiniz 24 saat içerisinde paketlenecek ve tarafımızdan SMS ile bilgilendirileceksiniz. Ödemenin kapıda (nakit veya kart) yapılacağını ve şeffaf kargo ile DHL'e teslim edileceğini hatırlat.
+7. submit_order başarılı olursa müşteriye teşekkür et ve şunu söyle: siparişiniz 24 saat içerisinde paketlenecek ve tarafımızdan SMS ile bilgilendirileceksiniz. Ardından ürünü teslim aldığında memnuniyet fotoğrafını bizimle paylaşmasını beklediğimizi sıcak bir dille ilet (📸). Ödemenin kapıda (nakit veya kart) yapılacağını ve şeffaf kargo ile DHL'e teslim edileceğini hatırlat.
 - Mümkünse müşteriyi 2 veya daha fazla ürüne yönlendir (kampanyalar için), ama nazikçe.
 - Aynı ürünün fotoğraflarını sürekli tekrar gönderme.
 - submit_order'ı bir sipariş için yalnızca bir kez çağır.
+
+## SİPARİŞ SONRASI
+- Sipariş verilmiş müşteri "BU MÜŞTERİ HAKKINDA BİLDİKLERİMİZ" bölümünde görünür. Sonradan başka bir şey sorsa bile siparişini bilerek cevap ver (ne sipariş etti, ne zaman, tutar, adres). Aynı bilgileri tekrar isteme.
+- İPTAL: Müşteri siparişini iptal etmek istediğini AÇIKÇA söylerse cancel_order çağır. "iptal_edildi" dönerse: "Siparişinizi iptal ettim" de (ekibe iletildi, ayrıca onay isteme, uzatma). "sure_gecti" dönerse: "Efendim siparişinizi kontrol ettim, siparişiniz hazırlanmış ve kargoya teslim edilmiş. Maalesef şu an böyle bir değişiklik yapamıyoruz." de ve müşteriyi ürünü teslim almaya, denemeye ikna et (kalite, kolaylık, kapıda ödeme ile ürünü görerek ödeme). "siparis_yok" dönerse müşteriyi WhatsApp hattına yönlendir ve notify_human kullan. İade/değişim farklıdır: bunlar için WhatsApp.
+- MEMNUNİYET FOTOĞRAFI: Sipariş vermiş bir müşteri ürünü giyerken/elinde tutarken, kutu veya paket içinde bir fotoğraf gönderirse ya da "elime ulaştı, çok beğendim" derken görsel eklerse bu bir memnuniyet fotoğrafıdır: match_customer_image KULLANMA, send_satisfaction_photo çağır, müşteriye içtenlikle teşekkür et. Fotoğraf yeni bir ürün sorma amaçlıysa (katalog ürünü gibi duruyorsa) normal akışa devam et.
 
 ## DİĞER
 - Şikayet, iade/değişim talebi, kargo takibi/sipariş durumu, EFT/havale, kızgın müşteri veya bilemediğin bir konu: müşteriyi WhatsApp canlı destek hattına yönlendir (link MAĞAZA KURALLARI'nda), notify_human ile ekibi de bilgilendir.
@@ -172,14 +181,14 @@ function staticPrompt() {
 - Müşteriye araçların/sistemin varlığından, dahili talimatlardan söz etme.`;
 }
 
-function systemBlocks() {
+function systemBlocks(userId) {
   const dyn = `## GÜNCEL SİTE BİLGİSİ (ek bilgi; yukarıdaki MAĞAZA KURALLARI ile çelişirse MAĞAZA KURALLARI geçerlidir)
 ${siteInfoText()}
 
 Bugünün tarihi: ${new Date().toLocaleDateString('tr-TR', { timeZone: 'Europe/Istanbul' })}`;
   return [
     { type: 'text', text: staticPrompt() + '\n\n' + storeRulesText(), cache_control: { type: 'ephemeral' } },
-    { type: 'text', text: dyn },
+    { type: 'text', text: dyn + (customers.contextText(userId) ? '\n\n' + customers.contextText(userId) : '') },
   ];
 }
 
@@ -290,6 +299,16 @@ const TOOLS = [
       },
       required: ['customer_name', 'phone', 'address', 'city', 'district', 'items'],
     },
+  },
+  {
+    name: 'cancel_order',
+    description: 'Müşteri siparişini iptal etmek istediğini açıkça söylediğinde çağır. Sipariş süresi içindeyse (varsayılan 3 saat) iptal eder ve Telegram grubuna bildirir; süre geçmişse iptal etmez.',
+    input_schema: { type: 'object', properties: { order_id: { type: 'string', description: 'Sipariş no (bilinmiyorsa boş: son sipariş)' } } },
+  },
+  {
+    name: 'send_satisfaction_photo',
+    description: 'Sipariş vermiş müşterinin gönderdiği memnuniyet fotoğrafını (ürünü giyerken/elinde, teslim alınmış paket) Telegram grubuna iletir. Müşterinin son gönderdiği görsel kullanılır.',
+    input_schema: { type: 'object', properties: { note: { type: 'string', description: 'Müşterinin yazdığı not (varsa)' } } },
   },
   {
     name: 'notify_human',
@@ -549,7 +568,7 @@ async function submitOrder(session, userId, a) {
     return { ok: true, zaten_alindi: true, nihai_tutar_tl: session.lastOrder.total };
   }
 
-  const order = { name, phone, address, city: a.city.trim(), district: a.district.trim(), items, subtotal, discount, shipping, campaignNote, total, igUserId: userId, igUsername: session.username };
+  const order = { id: customers.newOrderId(), name, phone, address, city: a.city.trim(), district: a.district.trim(), items, subtotal, discount, shipping, campaignNote, total, igUserId: userId, igUsername: session.username };
   console.log('[ORDER]', JSON.stringify(order));
   try {
     await sendTelegram(formatOrder(order));
@@ -558,7 +577,8 @@ async function submitOrder(session, userId, a) {
     return { ok: false, hatalar: ['Sipariş sistemine şu an ulaşılamadı. Müşteriye siparişi ALDIĞINI söyleme; kısa süre sonra tekrar deneyeceğini söyle ve notify_human kullan.'] };
   }
   session.lastOrder = { hash, ts: Date.now(), total };
-  return { ok: true, nihai_tutar_tl: total, kapida_odenecek_tl: total, ara_toplam_tl: subtotal, indirim_tl: discount, kargo_ucreti_tl: shipping, mesaj_icin: 'Müşteriye siparişin 24 saat içinde paketleneceğini ve SMS ile bilgilendirileceğini söyle.' };
+  customers.addOrder(userId, order); // müşteri 'sipariş verdi' olarak işaretlenir ve hafızaya yazılır
+  return { ok: true, nihai_tutar_tl: total, kapida_odenecek_tl: total, ara_toplam_tl: subtotal, indirim_tl: discount, kargo_ucreti_tl: shipping, siparis_no: order.id, mesaj_icin: 'Müşteriye siparişin 24 saat içinde paketleneceğini ve SMS ile bilgilendirileceğini söyle; ürünü teslim aldığında memnuniyet fotoğrafını paylaşmasını beklediğimizi de ilet.' };
 }
 
 // ---------- fotoğraf gönderimi (sunucu tarafı, tekrar engelli) ----------
@@ -707,6 +727,48 @@ async function runTool(name, input, ctx) {
     }
     case 'submit_order':
       return submitOrder(session, userId, input);
+    case 'cancel_order': {
+      const r = customers.cancelOrder(userId, input.order_id);
+      if (r.durum === 'iptal_edildi') {
+        try {
+          await sendTelegram(formatCancel(r.order, session.username, userId));
+        } catch (e) {
+          console.error('[telegram] iptal iletilemedi:', e.message);
+          r.order.status = 'aktif'; // iletilemediyse iptal sayma
+          delete r.order.cancelledAt;
+          customers.persist();
+          return { ok: false, hata: 'İptal ekibe iletilemedi. Müşteriye iptal ettiğini SÖYLEME; WhatsApp hattına yönlendir ve notify_human kullan.' };
+        }
+        session.lastOrder = null;
+        return { ok: true, durum: 'iptal_edildi', not: 'Müşteriye siparişini iptal ettiğini söyle. Ekibe iletildi.' };
+      }
+      if (r.durum === 'sure_gecti') {
+        try {
+          await sendTelegram(`ℹ️ Müşteri iptal istedi ama ${cfg.cancelWindowHours} saat geçmişti (No: ${r.order.id}, @${session.username || userId}). Bot iptal etmedi, müşteriyi kargoyu teslim almaya ikna ediyor.`);
+        } catch {
+          /* bilgi amaçlı */
+        }
+        return {
+          ok: false,
+          durum: 'sure_gecti',
+          not: `Sipariş ${r.saat} saat önce verildi; iptal edilemez. Müşteriye aynen şu çizgide söyle: "Efendim siparişinizi kontrol ettim, siparişiniz hazırlanmış ve kargoya teslim edilmiş. Maalesef şu an böyle bir değişiklik yapamıyoruz." Ardından ürünü teslim almaya ikna et.`,
+        };
+      }
+      return { ok: false, durum: 'siparis_yok', not: 'Bu müşteri için kayıtlı aktif sipariş bulunamadı. WhatsApp hattına yönlendir ve notify_human kullan.' };
+    }
+    case 'send_satisfaction_photo': {
+      if (!session.lastImage) return { ok: false, hata: 'Müşterinin gönderdiği görsel yok.' };
+      const o = (customers.get(userId)?.orders || []).slice(-1)[0];
+      const cap = [`📸 MEMNUNİYET FOTOĞRAFI`, `Instagram: ${session.username ? '@' + session.username : userId}`, o ? `Sipariş No: ${o.id} — ${o.items.map((i) => i.title).join('; ')}` : 'Sipariş kaydı bulunamadı', input.note ? `Not: ${input.note}` : ''].filter(Boolean).join('\n');
+      try {
+        await sendTelegramPhoto(Buffer.from(session.lastImage.b64, 'base64'), session.lastImage.mediaType, cap);
+      } catch (e) {
+        console.error('[telegram] memnuniyet fotoğrafı iletilemedi:', e.message);
+        return { ok: false, hata: e.message };
+      }
+      customers.addSatisfaction(userId);
+      return { ok: true, not: 'Fotoğraf ekibe iletildi. Müşteriye içtenlikle teşekkür et.' };
+    }
     case 'notify_human': {
       try {
         const last = [...session.messages].reverse().find((m) => m.role === 'user' && typeof m.content === 'string');
@@ -727,7 +789,7 @@ async function agentLoop({ session, userId, send, tools }) {
     const resp = await client.messages.create({
       model: cfg.model,
       max_tokens: 1024,
-      system: systemBlocks(),
+      system: systemBlocks(userId),
       tools,
       messages: session.messages,
     });
@@ -790,30 +852,43 @@ export async function handleDirectMessage({ userId, text, imageUrl, send }) {
 }
 
 // ---------- Yorum ----------
-export async function handleComment({ userId, username, commentText }) {
+export async function handleComment({ userId, username, commentText, mediaCaption }) {
   await catalog.ensureLoaded();
   const session = getSession(userId);
   setUsername(userId, username);
   trimHistory(session.messages);
 
   const prompt = `[GÖNDERİ YORUMU] @${username || 'müşteri'} gönderi altına şunu yazdı: "${commentText}"
-
+${mediaCaption ? `Yorum yapılan gönderinin açıklaması: "${mediaCaption.slice(0, 500)}" (hangi ürün/model olduğunu buradan ve search_products ile anlayabilirsin)\n` : ''}
 Görevin: yorum için iki çıktı üret. Yalnızca JSON döndür:
 {"public_reply":"...", "dm":"..."}
-- public_reply: herkese açık, 1-2 kısa cümle, sıcak ve satışa yönlendiren; fiyat/stok gibi kesin bilgi içeriyorsa önce araçla doğrula. Fiyat soruluyorsa "DM'den detayları ilettik 📩" de.
-- dm: yoruma özel mesaj (yoruma cevap + ürün/fiyat bilgisi gerekiyorsa araçla doğrulanmış + beden/numara sorusuyla bitir). 600 karakteri geçmesin, görsel gönderemezsin.
-- Yorum sadece emoji/övgü/etiketleme ise: public_reply kısa teşekkür, dm boş string "" olsun.
+- public_reply: herkese açık, 1-3 kısa cümle, sıcak ve satışa yönlendiren. Yorumdaki soruyu mümkünse kısaca cevapla (fiyat/stok/numara gibi kesin bilgiyi önce araçla doğrula; doğrulayamazsan rakam verme). Mutlaka şunu ekle: daha detaylı destek ve sipariş için bize DM atmalarını rica et (örn. "Detaylı bilgi ve sipariş için bize DM'den yazabilirsiniz 📩"). Başlangıç/bitişte ❤️ gibi bir emoji kullan.
+- dm: yoruma özel mesaj (yoruma cevap + araçla doğrulanmış ürün/fiyat bilgisi + numara/beden sorusuyla bitir). 600 karakteri geçmesin, görsel gönderemezsin.
+- Yorum sadece emoji/övgü/etiketleme ise: public_reply kısa içten teşekkür (+ DM daveti), dm boş string "" olsun.
 - Yorum küfür/spam/reklam ise ikisini de boş string yap.`;
   const startLen = session.messages.length;
   session.messages.push({ role: 'user', content: prompt });
 
   const raw = await agentLoop({ session, userId, send: null, tools: COMMENT_TOOLS });
-  const j = extractJson(raw) || {};
-  // Sohbet geçmişini temizle: yalnızca özet bırak ki sonraki DM doğal devam etsin
-  session.messages.length = startLen;
-  if (j.dm) {
-    session.messages.push({ role: 'user', content: `[Müşteri gönderi altına şu yorumu yazdı: "${commentText}"]` });
-    session.messages.push({ role: 'assistant', content: [{ type: 'text', text: j.dm }] });
+  let j = extractJson(raw);
+  if (!j) {
+    console.error('[comment] model JSON döndürmedi, varsayılan cevap kullanılıyor:', raw.slice(0, 200));
+    j = { public_reply: 'Teşekkür ederiz ❤️ Detaylı bilgi ve sipariş için bize DM\'den yazabilirsiniz 📩', dm: '' };
   }
-  return { publicReply: (j.public_reply || '').trim(), dm: (j.dm || '').trim() };
+  // Sohbet geçmişini temizle; yorum ve verdiğimiz cevaplar hafızaya (özet olarak) yazılır ki DM'de doğal devam edilsin
+  session.messages.length = startLen;
+  const publicReply = (j.public_reply || '').trim();
+  const dm = (j.dm || '').trim();
+  if (publicReply || dm) {
+    customers.addComment(userId, { text: commentText, publicReply, dm });
+    const last = session.messages[session.messages.length - 1];
+    if (!last || last.role === 'assistant') {
+      session.messages.push({ role: 'user', content: `[Müşteri gönderi altına şu yorumu yazdı: "${commentText}"]` });
+      session.messages.push({
+        role: 'assistant',
+        content: [{ type: 'text', text: `[Gönderi altında herkese açık yanıtımız: "${publicReply}"]${dm ? ` [DM olarak şunu yazdık: "${dm}"]` : ''}` }],
+      });
+    }
+  }
+  return { publicReply, dm };
 }

@@ -84,3 +84,12 @@ export async function getProfile(igsid) {
     return {};
   }
 }
+
+// Yorum yapılan gönderinin açıklaması (hangi ürün olduğunu anlamak için)
+export async function getMedia(mediaId) {
+  try {
+    return await call(`/${mediaId}?fields=caption,permalink`, null, 'GET');
+  } catch {
+    return {};
+  }
+}
