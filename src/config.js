@@ -52,7 +52,16 @@ export const cfg = {
   siteProductPath: env.SITE_PRODUCT_PATH || '/product/',
   // Instagram DM'de webp destekleniyor; yine de gerekirse JPEG'e çevirmek için true yapılabilir
   convertWebp: String(env.CONVERT_WEBP || '').toLowerCase() === 'true',
-  campaignRules: parseRules(env.CAMPAIGN_RULES),
+  // Varsayılan kampanya: 2-3 üründe 300 TL, 4+ üründe 600 TL indirim (toplam). CAMPAIGN_RULES ile değiştirilebilir.
+  campaignRules: parseRules(env.CAMPAIGN_RULES || '4:600,2:300'),
+  // Sepet (indirim sonrası) bu tutarın altındaysa sabit kargo ücreti eklenir
+  freeShippingMin: Number(env.FREE_SHIPPING_MIN || 2500),
+  shippingFee: Number(env.SHIPPING_FEE || 100),
+  whatsappUrl: env.WHATSAPP_URL || 'https://wa.me/905451348934',
+  // Müşteri son mesajımızı gördüyse ve bu kadar saat cevap yazmadıysa tek seferlik hatırlatma gönderilir (0 = kapalı)
+  followupHours: Number(env.FOLLOWUP_HOURS ?? 6),
+  // seen = sadece "görüldü" bilgisi geldiyse; any = görüldü bilgisi gelmese de son mesajımızdan itibaren
+  followupMode: (env.FOLLOWUP_MODE || 'seen').toLowerCase(),
 
   tgToken: env.TELEGRAM_BOT_TOKEN,
   tgChatId: env.TELEGRAM_CHAT_ID,

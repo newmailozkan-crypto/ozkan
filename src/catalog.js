@@ -216,7 +216,7 @@ function normalize(rawIn) {
 
   const colorField = text(pick(raw, ['color', 'renk'])) || link.color || '';
   const groupId = text(pick(raw, ['item_group_id', 'group_id', 'groupid', 'parentid', 'parent_id'])) || null;
-  const description = stripHtml(pick(raw, ['description', 'aciklama', 'açıklama', 'detail', 'detay', 'content'])).slice(0, 600);
+  const description = stripHtml(pick(raw, ['description', 'aciklama', 'açıklama', 'detail', 'detay', 'content'])).slice(0, 1500);
   const groupBase = groupId || link.base || null;
 
   return {
@@ -870,6 +870,14 @@ export function shortlistByVisual(desc, hint = '', limit = 14) {
   return out;
 }
 
+// Açıklamadaki kalıp/numara notlarını ayıklar ("kalıbı dardır, bir numara büyük alın" gibi)
+export function fitNote(desc) {
+  if (!desc) return '';
+  const parts = String(desc).split(/(?<=[.!?])\s+|\n+|\s[-•|]\s/u);
+  const hits = parts.filter((x) => /kal[ıi]p|numara|beden|\bdar\b|dardır|geniş|b[üu]y[üu]k al|k[üu][çc][üu]k al/i.test(x));
+  return hits.join(' ').slice(0, 300);
+}
+
 // Model'e gidecek kısa ürün özeti
 export function brief(p, size) {
   const link = p.url && p.sizeParam && size ? `${p.url}?${p.sizeParam}=${encodeURIComponent(sizeKey(size))}` : p.url || undefined;
@@ -885,6 +893,7 @@ export function brief(p, size) {
     secilen_beden_stokta: size ? hasSize(p, size) : undefined,
     gorunum: p.visual?.ozet || undefined,
     aciklama: p.description ? p.description.slice(0, 300) : undefined,
+    kalip_notu: fitNote(p.description) || 'açıklamada özel kalıp notu yok (kalıp standart/tam kabul edilir)',
     link,
     gorsel_var: p.images.length > 0,
   };

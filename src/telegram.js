@@ -29,7 +29,8 @@ export function formatOrder(o) {
     '',
     `Ara Toplam: ${tl(o.subtotal)}`,
     o.discount ? `İndirim${o.campaignNote ? ` (${o.campaignNote})` : ''}: -${tl(o.discount)}` : null,
-    `NİHAİ SATIŞ FİYATI: ${tl(o.total)}`,
+    o.shipping ? `Kargo ücreti: +${tl(o.shipping)}` : 'Kargo: ücretsiz',
+    `NİHAİ SATIŞ FİYATI (kapıda ödeme): ${tl(o.total)}`,
     '',
     `Instagram: ${o.igUsername ? '@' + o.igUsername : o.igUserId}`,
   ]
