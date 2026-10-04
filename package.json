@@ -10,13 +10,14 @@
     "test:feed": "node test-feed.js",
     "test:site": "node test-site.js",
     "test:bot": "node test-bot.js && node test-push.js",
-    "test": "node test-feed.js && node test-site.js && node test-bot.js && node test-push.js && node test-rules.js && node test-orders.js"
+    "test": "node test-feed.js && node test-site.js && node test-bot.js && node test-push.js && node test-rules.js && node test-orders.js && node test-share.js"
   },
   "engines": {
     "node": ">=20"
   },
   "optionalDependencies": {
-    "sharp": "^0.33.5"
+    "sharp": "^0.33.5",
+    "ffmpeg-static": "^5.2.0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.60.0",

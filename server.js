@@ -6,6 +6,7 @@ import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamili
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
 import { handleDirectMessage, handleComment, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup } from './src/ai.js';
 import { sendTelegram } from './src/telegram.js';
+import { resolveShared, isMediaAttachment } from './src/media.js';
 import { initImages, instagramImageUrl, serveImage } from './src/images.js';
 
 checkConfig();
@@ -114,6 +115,16 @@ function enqueue(userId, task) {
 
 const FALLBACK = 'Şu an yoğunluk yaşıyoruz, mesajınızı aldık. Birazdan size tekrar dönüş yapacağız 🙏';
 
+// Gönderdiğimiz mesajlar (kimlik -> içerik/ürün): müşteri bir mesajımıza "yanıtla" yapınca hangi ürün olduğunu bilmek için
+const sentMap = new Map();
+function rememberSent(ids, info) {
+  for (const id of [].concat(ids || [])) {
+    if (!id) continue;
+    sentMap.set(id, info);
+    if (sentMap.size > 4000) sentMap.delete(sentMap.keys().next().value);
+  }
+}
+
 async function processMessage(event) {
   const senderId = event.sender?.id;
   if (event.read && senderId) {
@@ -127,30 +138,70 @@ async function processMessage(event) {
 
   const attachments = msg.attachments || [];
   const image = attachments.find((a) => a.type === 'image');
-  const unsupported = !msg.text && !image;
+  const sharedAtts = attachments.filter((a) => a !== image && isMediaAttachment(a));
+  const story = msg.reply_to?.story || null;
+  const hasShared = sharedAtts.length > 0 || Boolean(story && !image);
+  const unsupported = !msg.text && !image && !hasShared;
+  if (attachments.length || story || msg.reply_to) {
+    recordEvent('mesaj_eki', { kimden: senderId, ekler: attachments.map((a) => `${a.type}:${Object.keys(a.payload || {}).join('/')}`), hikaye_yaniti: Boolean(story), yanitlanan_mesaj: msg.reply_to?.mid ? true : false });
+  }
 
   noteUserMessage(senderId);
   enqueue(senderId, async () => {
     try {
       if (unsupported) {
-        await ig.sendText(senderId, 'Mesajınızı aldım 😊 Yazı veya ürün görseli olarak iletirseniz hemen yardımcı olabilirim.');
+        await ig.sendText(senderId, 'Mesajınızı aldım 😊 Yazı, ürün görseli veya paylaşımımızı iletirseniz hemen yardımcı olabilirim.');
         return;
       }
       ig.typingOn(senderId);
       const prof = await ig.getProfile(senderId);
       setUsername(senderId, prof.username);
 
+      // Paylaşılan gönderi / reels / hikaye: görseli ve açıklamayı çöz
+      let imageData = null;
+      let caption = '';
+      const notes = [];
+      if (hasShared) {
+        const r = await resolveShared(sharedAtts, story);
+        recordEvent('paylasim_cozuldu', { kimden: senderId, ...r?.debug, gorsel_alindi: Boolean(r?.image), aciklama: Boolean(r?.caption) });
+        if (r) {
+          imageData = r.image;
+          caption = r.caption;
+          const kind = r.kind === 'hikaye yanıtı' ? 'bir hikayemize yanıt verdi' : `bir Instagram paylaşımını (${r.kind}) iletti`;
+          if (r.image) notes.push(`Müşteri ${kind}; görseli ekledim. Paylaşım müşterinin sormak/sipariş vermek istediği üründür.${r.caption ? ` Paylaşım açıklaması: "${r.caption.slice(0, 400)}".` : ''}`);
+          else if (r.caption) notes.push(`Müşteri ${kind} ama görseli okunamadı. Paylaşım açıklaması: "${r.caption.slice(0, 400)}". Açıklamadaki model/renk bilgisiyle search_products kullan.`);
+          else notes.push(`Müşteri ${kind} ama içeriği (görsel/video) okunamadı. Bunu ona söyleme tonunda "gönderiyi tam göremedim" diyerek ürünün adını veya ekran görüntüsünü rica et; yazı veya görselle iletebileceğini nazikçe belirt.`);
+        }
+      }
+
+      // "Yanıtla" ile bir mesajımıza cevap verdiyse
+      let replyTo = null;
+      if (msg.reply_to?.mid) replyTo = sentMap.get(msg.reply_to.mid) || { unknown: true };
+
       const reply = await handleDirectMessage({
         userId: senderId,
         text: msg.text || '',
-        imageUrl: image?.payload?.url,
+        imageUrl: imageData ? undefined : image?.payload?.url,
+        imageData,
+        notes,
+        replyTo,
+        caption,
         send: {
-          text: async (t) => { await ig.sendText(senderId, t); noteBotMessage(senderId); },
-          image: async (u) => { await ig.sendImage(senderId, instagramImageUrl(u)); noteBotMessage(senderId); },
+          text: async (t, productId) => {
+            const ids = await ig.sendText(senderId, t);
+            rememberSent(ids, { productId, text: t });
+            noteBotMessage(senderId);
+          },
+          image: async (u, productId) => {
+            const r = await ig.sendImage(senderId, instagramImageUrl(u));
+            rememberSent(r?.message_id, { productId, text: '(ürün fotoğrafı)' });
+            noteBotMessage(senderId);
+          },
         },
       });
       if (reply) {
-        await ig.sendText(senderId, reply);
+        const ids = await ig.sendText(senderId, reply);
+        rememberSent(ids, { text: reply });
         noteBotMessage(senderId);
       }
     } catch (e) {
