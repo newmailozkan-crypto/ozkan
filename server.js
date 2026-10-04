@@ -5,6 +5,7 @@ import * as ig from './src/instagram.js';
 import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
 import { handleDirectMessage, handleComment, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup } from './src/ai.js';
+import { sendTelegram } from './src/telegram.js';
 import { initImages, instagramImageUrl, serveImage } from './src/images.js';
 
 checkConfig();
@@ -63,6 +64,12 @@ const debugAuth = (req, res) => {
 app.get('/debug/status', (req, res) => debugAuth(req, res) && res.json({ ...debugStatus(), env: Object.fromEntries(['IG_VERIFY_TOKEN','IG_ACCESS_TOKEN','IG_ACCOUNT_ID','ANTHROPIC_API_KEY','PRODUCT_FEED_URL','SITE_CATALOG_URL','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID'].map((k) => [k, Boolean(process.env[k])])), models: { chat: cfg.model, vision: cfg.visionModel, index: cfg.indexModel } }));
 app.get('/debug/feed', (req, res) => debugAuth(req, res) && res.json(debugFeed()));
 app.get('/debug/catalog', (req, res) => debugAuth(req, res) && res.json(debugSearch(String(req.query.q || ''), Math.min(Number(req.query.limit) || 10, 30))));
+const events = [];
+function recordEvent(kind, info) {
+  events.push({ at: new Date().toISOString(), kind, ...info });
+  if (events.length > 40) events.shift();
+}
+app.get('/debug/events', (req, res) => debugAuth(req, res) && res.json({ son_olaylar: [...events].reverse() }));
 app.get('/debug/families', (req, res) => debugAuth(req, res) && res.json(debugFamilies()));
 
 // Instagram'ın alabilmesi için katalogdaki webp görselleri JPEG olarak sunar (yalnızca katalogda kayıtlı görseller)
@@ -161,18 +168,39 @@ async function processComment(change) {
   const v = change.value || {};
   const commentId = v.id;
   const from = v.from || {};
-  if (!commentId || !v.text) return;
-  if (String(from.id) === String(cfg.igAccountId)) return; // kendi yorumumuz
-  if (v.parent_id) return; // yanıtlara yanıt verme (döngü önlemi)
+  recordEvent('yorum_geldi', { id: commentId, kimden: from.username || from.id, metin: String(v.text || '').slice(0, 80) });
+  if (!commentId || !v.text) return recordEvent('yorum_atlandi', { neden: 'id veya metin yok' });
+  if (String(from.id) === String(cfg.igAccountId)) return recordEvent('yorum_atlandi', { id: commentId, neden: 'kendi hesabımızın yorumu (test için başka hesaptan yorum yazın)' });
+  if (v.parent_id) return recordEvent('yorum_atlandi', { id: commentId, neden: 'yanıta yanıt (döngü önlemi)' });
   if (isDuplicate('c:' + commentId)) return;
 
   enqueue(from.id || commentId, async () => {
     try {
-      const { publicReply, dm } = await handleComment({ userId: from.id, username: from.username, commentText: v.text });
-      if (publicReply) await ig.replyToComment(commentId, publicReply);
-      if (dm) await ig.privateReply(commentId, dm);
+      const media = v.media?.id ? await ig.getMedia(v.media.id) : {};
+      const { publicReply, dm } = await handleComment({ userId: from.id, username: from.username, commentText: v.text, mediaCaption: media.caption });
+      const result = { id: commentId, kimden: from.username || from.id };
+      if (publicReply) {
+        await ig.replyToComment(commentId, publicReply);
+        result.herkese_acik_cevap = 'gönderildi';
+      }
+      if (dm) {
+        try {
+          await ig.privateReply(commentId, dm);
+          result.dm = 'gönderildi';
+        } catch (e) {
+          result.dm = 'gönderilemedi: ' + e.message;
+          console.error('[comment] DM gönderilemedi:', e.message);
+        }
+      }
+      recordEvent('yorum_cevaplandi', result);
     } catch (e) {
       console.error('[comment] hata:', e);
+      recordEvent('yorum_hata', { id: commentId, hata: String(e.message).slice(0, 200) });
+      try {
+        await sendTelegram(`⚠️ Bir yoruma cevap verilemedi (@${from.username || from.id}): ${String(e.message).slice(0, 200)}\nYorum: ${String(v.text).slice(0, 150)}`);
+      } catch {
+        /* yoksay */
+      }
     }
   });
 }
@@ -186,6 +214,10 @@ app.post('/webhook', (req, res) => {
 
   const body = req.body;
   if (body?.object !== 'instagram') return;
+  for (const entry of body.entry || []) {
+    for (const ch of entry.changes || []) console.log('[webhook] değişiklik alanı:', ch.field);
+    if ((entry.messaging || []).length) console.log('[webhook] mesaj olayı:', entry.messaging.map((m) => (m.read ? 'read' : m.message ? 'message' : Object.keys(m).join('/'))).join(','));
+  }
   for (const entry of body.entry || []) {
     for (const ev of entry.messaging || []) processMessage(ev);
     for (const ch of entry.changes || []) {
