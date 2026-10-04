@@ -43,10 +43,14 @@ function chunkText(text, max = 900) {
   return out;
 }
 
+// Gönderilen mesajların kimliklerini döndürür (müşteri "yanıtla" yaptığında hangi mesaja yanıt verdiğini bilmek için)
 export async function sendText(recipientId, text) {
+  const ids = [];
   for (const part of chunkText(text)) {
-    await call('/me/messages', { recipient: { id: recipientId }, message: { text: part } });
+    const r = await call('/me/messages', { recipient: { id: recipientId }, message: { text: part } });
+    if (r?.message_id) ids.push(r.message_id);
   }
+  return ids;
 }
 
 export async function sendImage(recipientId, url) {
@@ -88,8 +92,31 @@ export async function getProfile(igsid) {
 // Yorum yapılan gönderinin açıklaması (hangi ürün olduğunu anlamak için)
 export async function getMedia(mediaId) {
   try {
-    return await call(`/${mediaId}?fields=caption,permalink`, null, 'GET');
+    return await call(`/${mediaId}?fields=caption,permalink,media_type,media_url,thumbnail_url`, null, 'GET');
   } catch {
     return {};
   }
+}
+
+// Kendi gönderi/hikayelerimizin listesi (müşteri bunları DM'den iletince hangi ürün olduğunu bulmak için), 10 dk önbellekli
+let mediaCache = { at: 0, items: [] };
+export async function listOwnMedia() {
+  if (Date.now() - mediaCache.at < 10 * 60 * 1000 && mediaCache.items.length) return mediaCache.items;
+  const fields = 'id,caption,media_type,media_url,thumbnail_url,permalink';
+  const items = [];
+  for (const edge of ['media', 'stories']) {
+    try {
+      let path = `/me/${edge}?fields=${fields}&limit=50`;
+      for (let i = 0; i < 3 && path; i++) {
+        const r = await call(path, null, 'GET');
+        items.push(...(r.data || []));
+        const next = r.paging?.next;
+        path = next ? next.replace(/^https?:\/\/[^/]+\/[^/]+/, '') : null;
+      }
+    } catch (e) {
+      console.error(`[media] /me/${edge} okunamadı:`, e.message);
+    }
+  }
+  if (items.length) mediaCache = { at: Date.now(), items };
+  return items;
 }

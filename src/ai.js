@@ -6,7 +6,7 @@ import { siteInfoText } from './siteInfo.js';
 import { storeRulesText, priceCart } from './storeRules.js';
 import { sendTelegram, sendTelegramPhoto, formatOrder, formatCancel, notifyHuman } from './telegram.js';
 import * as customers from './customers.js';
-import { getImage } from './images.js';
+import { getImage, dhash, hamming } from './images.js';
 import { describeCustomerImage } from './visualIndex.js';
 
 const client = new Anthropic({ apiKey: cfg.anthropicKey });
@@ -169,6 +169,10 @@ function staticPrompt() {
 - Mümkünse müşteriyi 2 veya daha fazla ürüne yönlendir (kampanyalar için), ama nazikçe.
 - Aynı ürünün fotoğraflarını sürekli tekrar gönderme.
 - submit_order'ı bir sipariş için yalnızca bir kez çağır.
+
+## MÜŞTERİ SENİN ÖNERDİĞİN ÜRÜNÜ SEÇTİĞİNDE
+- Müşteri senin gönderdiğin ürün fotoğrafına/mesajına "yanıtla" yaptıysa, ürün adını yazdıysa, "bunu istiyorum/bu güzel" dediyse veya fotoğrafı geri gönderdiyse ürün BELLİDİR. Sistem notunda "[SEÇİLEN ÜRÜN: ...]" görürsen o ürün seçilmiştir: tekrar fotoğraf isteme, "benzer model" deme, aynı fotoğrafı tekrar atma. Numarası belliyse find_alternatives ile stok kontrol et (stoksa siparişe geç), değilse sadece numarasını sor; sonra sipariş adımlarına (isim, telefon, adres...) devam et.
+- Müşteri bir Instagram gönderisi/reels/hikayemizi iletirse veya hikayemize yanıt verirse sistem notunda belirtilir; görsel eklenmişse match_customer_image kullan, yalnızca açıklama geldiyse search_products ile ara. İçerik okunamadıysa müşteriden ürünün adını yazmasını iste (görsel zorunlu değil).
 
 ## SİPARİŞ SONRASI
 - Sipariş verilmiş müşteri "BU MÜŞTERİ HAKKINDA BİLDİKLERİMİZ" bölümünde görünür. Sonradan başka bir şey sorsa bile siparişini bilerek cevap ver (ne sipariş etti, ne zaman, tutar, adres). Aynı bilgileri tekrar isteme.
@@ -409,7 +413,11 @@ async function identifyImage(session, hint) {
 }
 
 function startIdentify(session, hint) {
-  session.identify = identifyImage(session, hint).catch((e) => {
+  session.identify = (async () => {
+    const own = await detectOwnPhoto(session).catch(() => null);
+    if (own) return { desc: null, ranked: [{ p: own, guven: 1 }], own: true };
+    return identifyImage(session, hint);
+  })().catch((e) => {
     console.error('[identify]', e.message);
     return null;
   });
@@ -443,18 +451,25 @@ async function matchImage(session, size, hint, send) {
     return uniqueByModel(pool);
   };
 
+  if (id.own) {
+    out.musterinin_sectigi_urun = true;
+    out.sec_notu = 'Bu görsel SENİN az önce gönderdiğin ürün fotoğrafı: müşteri bu ürünü SEÇTİ. "Benzer model" deme, fotoğrafı tekrar gönderme; doğrudan sipariş adımlarına geç.';
+  }
   if (found) {
     const p = found.p;
     out.eslesen_urun = { ...catalog.brief(p, size), eslesme_guveni: found.guven };
+    if (!id.own && (session.shown || []).includes(p.id)) {
+      out.sec_notu = 'Eşleşen ürün az önce SENİN müşteriye gösterdiğin ürünlerden biri: müşteri büyük ihtimalle onu seçti. "Benzer model" deme; ürünü onunmuş gibi ele al, numarasını sor/stok kontrol et ve siparişe geç.';
+    }
     if (!size) {
       out.durum = 'eslesti_beden_sorulmali';
-      Object.assign(out, photoNote(await sendPhotos(session, send, [p.id])));
+      if (!id.own) Object.assign(out, photoNote(await sendPhotos(session, send, [p.id])));
       out.not = 'Ürün katalogda bulundu ve fotoğrafı müşteriye ZATEN gönderildi (tekrar gönderme). Kısa ikna edici tanıtım yaz, fiyatı (fiyat_tl) söyle ve numarasını sor; numara gelince find_alternatives ile stok kontrolü yap.' + emin;
       return out;
     }
     if (catalog.hasSize(p, size)) {
       out.durum = 'stokta';
-      Object.assign(out, photoNote(await sendPhotos(session, send, [p.id])));
+      if (!id.own) Object.assign(out, photoNote(await sendPhotos(session, send, [p.id])));
       out.not = `${size} numara stokta. Fotoğraf müşteriye ZATEN gönderildi (tekrar gönderme). Güncel fiyatı (fiyat_tl) ve öne çıkan özellikleri söyle, siparişe yönlendir. Sipariş alırken 2+ ürüne teşvik et.` + emin;
       return out;
     }
@@ -581,6 +596,45 @@ async function submitOrder(session, userId, a) {
   return { ok: true, nihai_tutar_tl: total, kapida_odenecek_tl: total, ara_toplam_tl: subtotal, indirim_tl: discount, kargo_ucreti_tl: shipping, siparis_no: order.id, mesaj_icin: 'Müşteriye siparişin 24 saat içinde paketleneceğini ve SMS ile bilgilendirileceğini söyle; ürünü teslim aldığında memnuniyet fotoğrafını paylaşmasını beklediğimizi de ilet.' };
 }
 
+// Müşteriye gösterilen ürünler (son 15): müşteri kendi fotoğrafımızı geri gönderirse / "bunu istiyorum" derse hangisi olduğunu bilmek için
+function noteShown(session, id) {
+  session.shown = (session.shown || []).filter((x) => x !== id);
+  session.shown.push(id);
+  if (session.shown.length > 15) session.shown.shift();
+}
+
+const productHashes = new Map(); // görsel adresi -> dHash
+async function productHash(url) {
+  if (productHashes.has(url)) return productHashes.get(url);
+  const img = await getImage(url, { maxSide: 256 });
+  const h = await dhash(img.buf);
+  if (productHashes.size > 2000) productHashes.clear();
+  productHashes.set(url, h);
+  return h;
+}
+
+// Müşterinin gönderdiği görsel, bizim az önce gösterdiğimiz ürün fotoğraflarından biri mi? (tek ve net eşleşme gerekir)
+export async function detectOwnPhoto(session) {
+  if (!session.shown?.length || !session.lastImage) return null;
+  const h = await dhash(Buffer.from(session.lastImage.b64, 'base64'));
+  if (h === null) return null;
+  const scored = [];
+  for (const id of session.shown) {
+    const p = catalog.getProduct(id);
+    if (!p?.images?.length) continue;
+    try {
+      const ph = await productHash(p.images[0]);
+      if (ph !== null) scored.push({ p, d: hamming(h, ph) });
+    } catch {
+      /* görsel indirilemedi */
+    }
+  }
+  scored.sort((a, b) => a.d - b.d);
+  if (!scored.length || scored[0].d > 10) return null;
+  if (scored[1] && scored[1].d - scored[0].d < 4) return null; // belirsiz (benzer çekimler): görsel modele bırak
+  return scored[0].p;
+}
+
 // ---------- fotoğraf gönderimi (sunucu tarafı, tekrar engelli) ----------
 const PHOTO_DEDUPE_MS = 5 * 60 * 1000;
 
@@ -600,16 +654,18 @@ async function sendPhotos(session, send, ids, { max = 10 } = {}) {
     }
     const caption = `${p.title} — ${p.price.toLocaleString('tr-TR')} TL`;
     try {
-      await send.image(p.images[0]);
-      await send.text(caption);
+      await send.image(p.images[0], p.id);
+      await send.text(caption, p.id);
       sent.push(p.id);
       session.photoLog.set(p.id, Date.now());
+      noteShown(session, p.id);
     } catch (e) {
       console.error('[send_product_photos] görsel gönderilemedi:', id, p.images[0], e.message);
       try {
-        await send.text(`${caption}${p.url ? '\n' + p.url : ''}`);
+        await send.text(`${caption}${p.url ? '\n' + p.url : ''}`, p.id);
         linkOnly.push(p.id);
         session.photoLog.set(p.id, Date.now());
+        noteShown(session, p.id);
       } catch {
         /* gönderilemedi */
       }
@@ -815,23 +871,41 @@ async function agentLoop({ session, userId, send, tools }) {
 }
 
 // ---------- DM ----------
-export async function handleDirectMessage({ userId, text, imageUrl, send }) {
+export async function handleDirectMessage({ userId, text, imageUrl, imageData, notes = [], replyTo, caption, send }) {
   await catalog.ensureLoaded();
   const session = getSession(userId);
   trimHistory(session.messages);
 
+  // Müşteri bir mesajımıza "yanıtla" yaptıysa: hangi ürün/mesaj olduğunu bota söyle
+  const sys = [...notes];
+  if (replyTo) {
+    const p = replyTo.productId ? catalog.getProduct(replyTo.productId) : null;
+    if (p) {
+      session.selected = p.id;
+      sys.push(`SEÇİLEN ÜRÜN: Müşteri senin gönderdiğin şu ürünün mesajına yanıt verdi: "${p.title}" (id: ${p.id}, fiyat ${p.price} TL). Müşteri bu ürünü seçti; ürün belli, benzer model gösterme. Numarası belliyse stok kontrol et, değilse numarasını sor, sonra sipariş adımlarına geç.`);
+    } else if (replyTo.text) {
+      sys.push(`Müşteri şu mesajımıza yanıt verdi: "${String(replyTo.text).slice(0, 300)}"`);
+    } else {
+      const last = (session.shown || []).slice(-3).map((id) => catalog.getProduct(id)?.title).filter(Boolean);
+      sys.push(`Müşteri önceki bir mesajımıza yanıt verdi (içeriği bilinmiyor).${last.length ? ` Son gösterdiğimiz ürünler: ${last.join(', ')}.` : ''} Sohbet geçmişine bakarak neyi kastettiğini anla.`);
+    }
+  }
+
   const content = [];
-  if (imageUrl) {
+  if (imageUrl || imageData) {
     try {
       session.identify = null;
-      session.lastImage = await downloadImage(imageUrl);
+      session.lastImage = imageData ? { b64: imageData.b64, mediaType: imageData.mediaType } : await downloadImage(imageUrl);
       content.push({ type: 'image', source: { type: 'base64', media_type: session.lastImage.mediaType, data: session.lastImage.b64 } });
-      startIdentify(session, text || ''); // ajan cevabı hazırlarken eşleştirme paralel çalışsın: görsel gelir gelmez başlar
+      startIdentify(session, [text, caption].filter(Boolean).join(' ')); // ajan cevabı hazırlarken eşleştirme paralel çalışsın
     } catch (e) {
       console.error('[image]', e.message);
     }
   }
-  const userText = text || (imageUrl ? '(Müşteri bir ürün görseli gönderdi)' : '');
+  const hasImage = content.length > 0;
+  let userText = text || (hasImage ? '(Müşteri bir ürün görseli gönderdi)' : '');
+  if (sys.length) userText = `${userText}${userText ? '\n' : ''}${sys.map((n) => `[SİSTEM NOTU: ${n}]`).join('\n')}`;
+  if (!userText) userText = '(boş mesaj)';
   content.push({ type: 'text', text: userText });
 
   const idx = session.messages.length;

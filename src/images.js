@@ -81,3 +81,40 @@ export async function serveImage(id) {
   if (!url) return null;
   return getImage(url, { maxSide: 1080 });
 }
+
+// Bellekteki bir görseli Claude için hazırlar (küçültür, JPEG yapar)
+export async function fromBuffer(buf, { maxSide = 1024 } = {}) {
+  let mediaType = 'image/jpeg';
+  if (sharp) {
+    try {
+      buf = await sharp(buf).rotate().resize({ width: maxSide, height: maxSide, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer();
+    } catch (e) {
+      throw new Error('Görsel işlenemedi: ' + e.message);
+    }
+  }
+  if (buf.length > 5 * 1024 * 1024) throw new Error('Görsel çok büyük (5 MB üstü)');
+  return { buf, mediaType, b64: buf.toString('base64') };
+}
+
+// Algısal parmak izi (dHash, 64 bit): müşterinin geri gönderdiği kendi fotoğrafımızı tanımak için
+export async function dhash(buf) {
+  if (!sharp) return null;
+  try {
+    const px = await sharp(buf).rotate().grayscale().resize(9, 8, { fit: 'fill' }).raw().toBuffer();
+    let h = 0n;
+    for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) h = (h << 1n) | (px[y * 9 + x] > px[y * 9 + x + 1] ? 1n : 0n);
+    return h;
+  } catch {
+    return null;
+  }
+}
+
+export function hamming(a, b) {
+  let x = a ^ b;
+  let n = 0;
+  while (x) {
+    n += Number(x & 1n);
+    x >>= 1n;
+  }
+  return n;
+}
