@@ -4,7 +4,7 @@ import { cfg, checkConfig } from './src/config.js';
 import * as ig from './src/instagram.js';
 import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
-import { handleDirectMessage, handleComment, setUsername } from './src/ai.js';
+import { handleDirectMessage, handleComment, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup } from './src/ai.js';
 import { initImages, instagramImageUrl, serveImage } from './src/images.js';
 
 checkConfig();
@@ -109,6 +109,10 @@ const FALLBACK = 'Şu an yoğunluk yaşıyoruz, mesajınızı aldık. Birazdan s
 
 async function processMessage(event) {
   const senderId = event.sender?.id;
+  if (event.read && senderId) {
+    noteSeen(String(senderId)); // müşteri son mesajımızı gördü
+    return;
+  }
   const msg = event.message;
   if (!senderId || !msg || msg.is_echo) return;
   if (String(senderId) === String(cfg.igAccountId)) return;
@@ -118,6 +122,7 @@ async function processMessage(event) {
   const image = attachments.find((a) => a.type === 'image');
   const unsupported = !msg.text && !image;
 
+  noteUserMessage(senderId);
   enqueue(senderId, async () => {
     try {
       if (unsupported) {
@@ -133,11 +138,14 @@ async function processMessage(event) {
         text: msg.text || '',
         imageUrl: image?.payload?.url,
         send: {
-          text: (t) => ig.sendText(senderId, t),
-          image: (u) => ig.sendImage(senderId, instagramImageUrl(u)),
+          text: async (t) => { await ig.sendText(senderId, t); noteBotMessage(senderId); },
+          image: async (u) => { await ig.sendImage(senderId, instagramImageUrl(u)); noteBotMessage(senderId); },
         },
       });
-      if (reply) await ig.sendText(senderId, reply);
+      if (reply) {
+        await ig.sendText(senderId, reply);
+        noteBotMessage(senderId);
+      }
     } catch (e) {
       console.error('[dm] hata:', e);
       try {
@@ -185,6 +193,23 @@ app.post('/webhook', (req, res) => {
     }
   }
 });
+
+// ---- 6 saat sessiz kalan (mesajımızı görmüş) müşterilere tek seferlik hatırlatma ----
+setInterval(() => {
+  for (const userId of dueFollowups()) {
+    enqueue(userId, async () => {
+      try {
+        const text = await buildFollowup(userId);
+        if (!text) return;
+        await ig.sendText(userId, text);
+        noteBotMessage(userId);
+        console.log('[followup] hatırlatma gönderildi:', userId);
+      } catch (e) {
+        console.error('[followup] gönderilemedi:', e.message);
+      }
+    });
+  }
+}, 5 * 60 * 1000).unref?.();
 
 await initImages(); // sharp (webp -> jpeg) hazır olsun, sonra katalog ve görsel hafıza yüklensin
 startCatalogRefresh();

@@ -10,7 +10,7 @@
     "test:feed": "node test-feed.js",
     "test:site": "node test-site.js",
     "test:bot": "node test-bot.js && node test-push.js",
-    "test": "node test-feed.js && node test-site.js && node test-bot.js && node test-push.js"
+    "test": "node test-feed.js && node test-site.js && node test-bot.js && node test-push.js && node test-rules.js"
   },
   "engines": {
     "node": ">=20"
