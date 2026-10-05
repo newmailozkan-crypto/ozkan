@@ -1,11 +1,31 @@
-import Anthropic from '@anthropic-ai/sdk';
+import fs from 'node:fs';
+import path from 'node:path';
 import { cfg } from './config.js';
+import { create } from './claude.js';
 import { getImage } from './images.js';
 
 // Görsel hafıza: her ürün görseli bir kez tanımlanır ve bellekte tutulur (görsel adresi -> tanım).
 // Böylece müşteri fotoğrafı geldiğinde ve "benzer ürün" önerirken her seferinde tüm görselleri baştan yorumlamak gerekmez.
-const client = new Anthropic({ apiKey: cfg.anthropicKey });
 const cache = new Map();
+try {
+  for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(cfg.visualFile, 'utf8')))) cache.set(k, v);
+  console.log(`[visual] ${cache.size} görsel tanımı diskten yüklendi (yeniden ücret ödenmez)`);
+} catch {
+  /* dosya yok */
+}
+let saveT = null;
+function persist() {
+  clearTimeout(saveT);
+  saveT = setTimeout(() => {
+    try {
+      fs.mkdirSync(path.dirname(cfg.visualFile), { recursive: true });
+      fs.writeFileSync(cfg.visualFile, JSON.stringify(Object.fromEntries(cache)));
+    } catch {
+      /* önemsiz */
+    }
+  }, 2000);
+  saveT.unref?.();
+}
 let running = false;
 
 export const getVisual = (url) => cache.get(url) || null;
@@ -34,9 +54,9 @@ function parseDescription(r) {
 }
 
 async function describeImg(img) {
-  const r = await client.messages.create({
+  const r = await create({
     model: cfg.indexModel,
-    max_tokens: 300,
+    max_tokens: 200,
     messages: [
       {
         role: 'user',
@@ -46,11 +66,11 @@ async function describeImg(img) {
         ],
       },
     ],
-  });
+  }, 'gorsel_hafiza');
   return parseDescription(r);
 }
 
-const describe = async (url) => describeImg(await getImage(url, { maxSide: 512 }));
+const describe = async (url) => describeImg(await getImage(url, { maxSide: 320 }));
 
 // Müşterinin gönderdiği fotoğrafı, katalogdaki görsel hafızayla AYNI sözlükle tanımlar (hızlı model ile)
 export const describeCustomerImage = (img) => describeImg(img);
@@ -76,7 +96,8 @@ export async function indexVisuals(urls) {
         }
       }
     };
-    await Promise.all([worker(), worker(), worker()]);
+    await Promise.all([worker(), worker()]);
+    if (done) persist();
   } finally {
     running = false;
   }

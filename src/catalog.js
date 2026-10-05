@@ -387,7 +387,7 @@ const wake = () => { const w = waiters; waiters = []; w.forEach((r) => r()); };
 let lastContact = Date.now(); // WordPress'in bota en son ulaştığı an (state sorgusu veya push)
 let alertState = { okSent: false, lastFailAlert: 0 };
 
-export const BOT_VERSION = '3.0-canli-woo';
+export const BOT_VERSION = '4.1-ucuz-adres-hatirlatma';
 
 const note = (kaynak, ok, detay) => {
   attempts.unshift({ zaman: new Date().toISOString(), kaynak, ok, detay: redact(detay).slice(0, 400) });
@@ -878,25 +878,27 @@ export function fitNote(desc) {
   return hits.join(' ').slice(0, 300);
 }
 
-// Model'e gidecek kısa ürün özeti
+// Bir modelin (tüm renkleri) stokta olan numaraları, küçükten büyüğe
+export function modelSizes(p) {
+  const set = new Set();
+  for (const x of products) if (x.modelKey === p.modelKey && x.inStock) for (const sz of x.sizes) if (sz.inStock) set.add(String(sz.size));
+  return [...set].sort((a, b) => parseFloat(a) - parseFloat(b));
+}
+
+// Model'e gidecek kısa ürün özeti (token tasarrufu için sade tutulur)
 export function brief(p, size) {
-  const link = p.url && p.sizeParam && size ? `${p.url}?${p.sizeParam}=${encodeURIComponent(sizeKey(size))}` : p.url || undefined;
-  return {
+  const out = {
     id: p.id,
     baslik: p.title,
-    model: p.modelName || undefined,
-    renk: p.color || undefined,
-    kategori: p.category || undefined,
-    marka: p.brand || undefined,
     fiyat_tl: p.price,
     stokta_olan_bedenler: p.sizes.filter((s) => s.inStock).map((s) => s.size),
-    secilen_beden_stokta: size ? hasSize(p, size) : undefined,
-    gorunum: p.visual?.ozet || undefined,
-    aciklama: p.description ? p.description.slice(0, 300) : undefined,
-    kalip_notu: fitNote(p.description) || 'açıklamada özel kalıp notu yok (kalıp standart/tam kabul edilir)',
-    link,
-    gorsel_var: p.images.length > 0,
   };
+  if (p.modelName) out.model = p.modelName;
+  if (size) out.secilen_beden_stokta = hasSize(p, size);
+  if (p.visual?.ozet) out.gorunum = p.visual.ozet.slice(0, 100);
+  if (p.description) out.aciklama = p.description.slice(0, 140);
+  out.kalip_notu = fitNote(p.description) || 'özel kalıp notu yok (standart/tam kalıp)';
+  return out;
 }
 
 // ---------- teşhis (debug) ----------

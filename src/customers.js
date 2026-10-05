@@ -91,7 +91,7 @@ const ago = (ts) => {
 // Sistem istemine eklenen müşteri özeti
 export function contextText(userId) {
   const r = get(userId);
-  if (!r || (!r.orders.length && !r.comments.length && !r.satisfaction.length)) return '';
+  if (!r || (!r.orders.length && !r.comments.length && !r.satisfaction.length && !giftActive(userId))) return '';
   const lines = ['## BU MÜŞTERİ HAKKINDA BİLDİKLERİMİZ (hafıza)'];
   if (r.orders.length) {
     lines.push(`Müşteri SİPARİŞ VERDİ olarak işaretli. Siparişleri:`);
@@ -106,6 +106,7 @@ export function contextText(userId) {
     for (const c of r.comments) lines.push(`- Yorum: "${c.text}" | Herkese açık cevabımız: "${c.publicReply || '-'}" | DM'de yazdığımız: "${c.dm || '-'}"`);
   }
   if (r.satisfaction.length) lines.push('Müşteri memnuniyet fotoğrafı gönderdi (teşekkür edildi).');
+  if (giftActive(userId)) lines.push("Bu müşteriye hediye teklifi yapıldı: sipariş verirse siparişine 249 TL değerinde 3'lü Nike çorap HEDİYE eklenecek. Müşteri sipariş vermek isterse bunu özette belirt; ayrıca fiyat/kampanya sunma.");
   return lines.join('\n');
 }
 
@@ -123,16 +124,25 @@ const convo = (userId) => {
 export function touchUser(userId) {
   const c = convo(userId);
   c.lastUserAt = Date.now();
-  c.followupSent = false;
+  c.followupStage = 0;
   save();
 }
 export function touchBot(userId) {
   convo(userId).lastBotAt = Date.now();
   save();
 }
-export function markFollowupSent(userId) {
-  convo(userId).followupSent = true;
+export function markFollowupStage(userId, stage) {
+  convo(userId).followupStage = stage;
   save();
+}
+// Hediye çorap teklifi yapıldı (24 saat geçerli): sipariş gelirse siparişe hediye eklenir
+export function markGift(userId) {
+  convo(userId).giftAt = Date.now();
+  save();
+}
+export function giftActive(userId) {
+  const at = get(userId)?.convo?.giftAt;
+  return Boolean(at && Date.now() - at < 24 * 3600 * 1000);
 }
 // Mağaza yetkilisi (insan) müşteriyle yazıştığında bot belirli süre susar ve sadece izler
 export function markHuman(userId) {
@@ -184,8 +194,8 @@ export function addLearned(q, a) {
   learnTimer.unref?.();
 }
 
-export function learnedText(n = 25) {
+export function learnedText(n = 8) {
   if (!learned.length) return '';
-  const rows = learned.slice(-n).map((x) => `- Müşteri: "${x.q}" → Ekibimizin cevabı: "${x.a}"`);
+  const rows = learned.slice(-n).map((x) => `- Müşteri: "${x.q.slice(0, 120)}" → Ekibimiz: "${x.a.slice(0, 160)}"`);
   return `## EKİBİMİZİN GERÇEK MÜŞTERİ CEVAPLARI (üslup/yaklaşım örneği)\nAşağıdakiler ekibimizin müşterilerle yazışmalarından alınmış örneklerdir. Tonu ve yaklaşımı öğren; ancak MAĞAZA KURALLARI ile çelişen bir bilgi/fiyat/kampanya görürsen MAĞAZA KURALLARI geçerlidir. Kişiye özel bilgileri başkasına söyleme.\n${rows.join('\n')}`;
 }

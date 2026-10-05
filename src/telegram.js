@@ -30,6 +30,7 @@ export function formatOrder(o) {
     `Ara Toplam: ${tl(o.subtotal)}`,
     o.discount ? `İndirim${o.campaignNote ? ` (${o.campaignNote})` : ''}: -${tl(o.discount)}` : null,
     o.shipping ? `Kargo ücreti: +${tl(o.shipping)}` : 'Kargo: ücretsiz',
+    o.gift ? "🎁 HEDİYE: 249 ₺ değerinde 3'lü Nike çorap (hatırlatma teklifi) siparişe eklenecek" : null,
     `NİHAİ SATIŞ FİYATI (kapıda ödeme): ${tl(o.total)}`,
     '',
     `Instagram: ${o.igUsername ? '@' + o.igUsername : o.igUserId}`,

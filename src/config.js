@@ -22,9 +22,9 @@ export const cfg = {
   graphVersion: env.GRAPH_VERSION || 'v21.0',
 
   anthropicKey: env.ANTHROPIC_API_KEY,
-  model: env.CLAUDE_MODEL || 'claude-sonnet-5-5',
+  model: env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001',
   // Görsel eşleştirme için ayrı model istenirse (örn. sohbet Haiku, görsel Sonnet). Boşsa CLAUDE_MODEL kullanılır.
-  visionModel: env.VISION_MODEL || env.CLAUDE_MODEL || 'claude-sonnet-5-5',
+  visionModel: env.VISION_MODEL || env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001',
   // Ürün görsellerini tek seferlik tanımlayan model (ucuz olanı yeterli)
   indexModel: env.INDEX_MODEL || 'claude-haiku-4-5-20251001',
   // Instagram'ın görsellere ulaşacağı herkese açık adres (Render bunu RENDER_EXTERNAL_URL olarak kendisi verir)
@@ -62,7 +62,19 @@ export const cfg = {
   // Sipariş sonrası bu süre içinde müşteri iptal isterse bot doğrudan iptal eder (saat)
   cancelWindowHours: Number(env.CANCEL_WINDOW_HOURS || 3),
   customersFile: env.CUSTOMERS_FILE || 'data/customers.json',
+  // Maliyet koruması (USD, tahmini): günlük uyarı eşiği ve (0 = kapalı) günlük limit
+  dailyAlertUsd: Number(env.DAILY_ALERT_USD ?? 3),
+  dailyCapUsd: Number(env.DAILY_CAP_USD ?? 0),
+  visualFile: env.VISUAL_FILE || 'data/visual-cache.json',
+  usageFile: env.USAGE_FILE || 'data/usage.json',
+  // Sistem istemine ek olarak siteden çekilen sayfa metinleri eklensin mi (varsayılan hayır: pahalı ve kurallar kodda)
+  siteInfoInPrompt: String(env.SITE_INFO_IN_PROMPT || '').toLowerCase() === 'true',
+  // Hatırlatmadaki hediye çorap görseli (boşsa katalogda 'çorap' ürünü aranır)
+  giftSocksImage: env.GIFT_SOCKS_IMAGE_URL || '',
+  // Art arda gelen müşteri mesajları bu kadar ms beklenip tek seferde işlenir
+  batchMs: Number(env.BATCH_MS || 2500),
   followupHours: Number(env.FOLLOWUP_HOURS ?? 6),
+  followup2Hours: Number(env.FOLLOWUP2_HOURS ?? 16),
   // Mağaza yetkilisi (insan) müşteriye yazdıktan sonra bot bu kadar saat sessiz kalıp sadece izler
   handoffHours: Number(env.HANDOFF_HOURS ?? 3),
   learnedFile: env.LEARNED_FILE || 'data/learned.json',

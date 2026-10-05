@@ -145,3 +145,23 @@ export async function listOwnMedia() {
   if (items.length) mediaCache = { at: Date.now(), items };
   return items;
 }
+
+// Müşteriyle son yazışmalar (bot yeniden başlamış veya insan yazışmış olsa bile sohbet geçmişini okuyabilmek için)
+export async function fetchHistory(userId, limit = 20) {
+  try {
+    const r = await call(`/me/conversations?platform=instagram&user_id=${encodeURIComponent(userId)}&fields=messages.limit(${limit}){id,message,from,created_time,attachments}`, null, 'GET');
+    const msgs = r?.data?.[0]?.messages?.data || [];
+    return msgs
+      .map((m) => ({
+        mid: m.id,
+        role: String(m.from?.id) === String(cfg.igAccountId) ? 'assistant' : 'user',
+        text: String(m.message || '').trim() || (m.attachments?.data?.length ? '[görsel/paylaşım gönderildi]' : ''),
+        at: Date.parse(m.created_time) || 0,
+      }))
+      .filter((m) => m.text)
+      .sort((a, b) => a.at - b.at);
+  } catch (e) {
+    console.error('[history] okunamadı:', e.message);
+    return [];
+  }
+}
