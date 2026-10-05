@@ -57,7 +57,7 @@ ok(taba.sizes.length === 7 && taba.sizes.map((s) => s.size).join(',') === '35,36
 ok(taba.price === 1099 && taba.priceOriginal === 2299, 'indirimli fiyat 1099, eski fiyat 2299');
 ok(taba.category === 'Bot & Çizme', `kategori temizlendi: "${taba.category}"`);
 ok(taba.url === 'https://magaza.com/product/platform-taba/', `link utm/numara parametresinden arındırıldı (${taba.url})`);
-ok(brief(taba, '37').link === 'https://magaza.com/product/platform-taba/?attribute_pa_numara=37', 'müşteriye giden link seçilen numarayla açılıyor');
+ok(brief(taba, '37').link === undefined && brief(taba, '37').secilen_beden_stokta === true, 'brief sade (link yok, seçilen beden stokta)');
 ok(taba.images.length === 1 && taba.images[0].endsWith('.webp'), 'görsel adresi bellekte');
 
 // --- stok mantığı ---

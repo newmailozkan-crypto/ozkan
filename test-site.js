@@ -111,7 +111,7 @@ ok(leopar.price === 1199 && !hasSize(leopar, '37') && hasSize(leopar, '36'), 'nu
 ok(calls.some((c) => c.includes('/product/lifestyle-leopar/')), 'her ürünün sayfası okundu');
 ok(otherColors(leopar, '37').some((p) => p.title === 'Lifestyle Siyah'), 'Leopar 37 yok -> Lifestyle Siyah 37 öneriliyor (diğer renk)');
 ok(!('eski_fiyat_tl' in brief(leopar, '36')) && brief(leopar, '36').fiyat_tl === 1199, 'müşteriye giden özette üstü çizili fiyat yok');
-ok(brief(leopar, '36').link === `${SITE}/product/lifestyle-leopar/?attribute_pa_numara=36`, 'ürün linki seçilen numarayla açılıyor');
+ok(brief(leopar, '36').link === undefined, 'brief sade (link yok)');
 ok(searchProducts({ query: 'sneaker', size: '45' }).every((p) => p.title === 'Lifestyle Siyah') && searchProducts({ query: 'sneaker', size: '45' }).length === 1, '45 numara sadece 35-45 aralığındaki üründe var');
 
 mode = 'html';

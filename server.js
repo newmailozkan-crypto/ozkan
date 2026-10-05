@@ -2,11 +2,13 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { cfg, checkConfig } from './src/config.js';
 import * as ig from './src/instagram.js';
+import { usageReport } from './src/claude.js';
 import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
-import { handleDirectMessage, handleComment, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup, humanMessage, observeCustomer, humanActive } from './src/ai.js';
+import { handleDirectMessage, handleComment, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup, humanMessage, observeCustomer, humanActive, hasSession } from './src/ai.js';
 import { sendTelegram } from './src/telegram.js';
 import { resolveShared, isMediaAttachment } from './src/media.js';
+import { createBatcher } from './src/batch.js';
 import { initImages, instagramImageUrl, serveImage } from './src/images.js';
 
 checkConfig();
@@ -65,6 +67,7 @@ const debugAuth = (req, res) => {
 app.get('/debug/status', (req, res) => debugAuth(req, res) && res.json({ ...debugStatus(), env: Object.fromEntries(['IG_VERIFY_TOKEN','IG_ACCESS_TOKEN','IG_ACCOUNT_ID','ANTHROPIC_API_KEY','PRODUCT_FEED_URL','SITE_CATALOG_URL','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID'].map((k) => [k, Boolean(process.env[k])])), models: { chat: cfg.model, vision: cfg.visionModel, index: cfg.indexModel } }));
 app.get('/debug/feed', (req, res) => debugAuth(req, res) && res.json(debugFeed()));
 app.get('/debug/catalog', (req, res) => debugAuth(req, res) && res.json(debugSearch(String(req.query.q || ''), Math.min(Number(req.query.limit) || 10, 30))));
+app.get('/debug/usage', (req, res) => debugAuth(req, res) && res.json(usageReport()));
 const events = [];
 function recordEvent(kind, info) {
   events.push({ at: new Date().toISOString(), kind, ...info });
@@ -180,69 +183,97 @@ async function processMessage(event) {
     recordEvent('izleme', { kimden: senderId, metin: String(msg.text || '').slice(0, 80) });
     return;
   }
-  enqueue(senderId, async () => {
-    try {
-      ig.typingOn(senderId);
-      const prof = await ig.getProfile(senderId);
-      setUsername(senderId, prof.username);
+  ig.typingOn(senderId);
+  batcher.add(senderId, { msg, image, sharedAtts, story, hasShared });
+}
 
-      // Paylaşılan gönderi / reels / hikaye: görseli ve açıklamayı çöz
-      let imageData = null;
-      let caption = '';
-      const notes = [];
-      if (hasShared) {
-        const r = await resolveShared(sharedAtts, story);
-        recordEvent('paylasim_cozuldu', { kimden: senderId, ...r?.debug, gorsel_alindi: Boolean(r?.image), aciklama: Boolean(r?.caption) });
-        if (r) {
-          imageData = r.image;
-          caption = r.caption;
-          const kind = r.kind === 'hikaye yanıtı' ? 'bir hikayemize yanıt verdi' : `bir Instagram paylaşımını (${r.kind}) iletti`;
-          if (r.image) notes.push(`Müşteri ${kind}; görseli ekledim. Paylaşım müşterinin sormak/sipariş vermek istediği üründür.${r.caption ? ` Paylaşım açıklaması: "${r.caption.slice(0, 400)}".` : ''}`);
-          else if (r.caption) notes.push(`Müşteri ${kind} ama görseli okunamadı. Paylaşım açıklaması: "${r.caption.slice(0, 400)}". Açıklamadaki model/renk bilgisiyle search_products kullan.`);
-          else notes.push(`Müşteri ${kind} ama içeriği (görsel/video) okunamadı. Bunu ona söyleme tonunda "gönderiyi tam göremedim" diyerek ürünün adını veya ekran görüntüsünü rica et; yazı veya görselle iletebileceğini nazikçe belirt.`);
+const lastResolved = new Map(); // müşteri -> paylaşım görseli en son ne zaman çözüldü
+
+async function processBatch(senderId, items) {
+  const send = {
+    text: async (t, productId) => {
+      const ids = await ig.sendText(senderId, t);
+      rememberSent(ids, { productId, text: t });
+      noteBotMessage(senderId);
+    },
+    image: async (u, productId) => {
+      const r = await ig.sendImage(senderId, instagramImageUrl(u));
+      rememberSent(r?.message_id, { productId, text: '(ürün fotoğrafı)' });
+      noteBotMessage(senderId);
+    },
+  };
+  try {
+    const prof = await ig.getProfile(senderId);
+    setUsername(senderId, prof.username);
+
+    const text = items.map((i) => i.msg.text).filter(Boolean).join('\n');
+    const lastImg = [...items].reverse().find((i) => i.image)?.image;
+    const sharedAtts = items.flatMap((i) => i.sharedAtts);
+    const story = items.find((i) => i.story && !i.image)?.story || null;
+    const hasShared = sharedAtts.length > 0 || Boolean(story);
+
+    // Paylaşılan gönderi / reels / hikaye: görseli ve açıklamayı çöz
+    let imageData = null;
+    let caption = '';
+    const notes = [];
+    if (hasShared) {
+      const r = await resolveShared(sharedAtts, story);
+      recordEvent('paylasim_cozuldu', { kimden: senderId, ...r?.debug, gorsel_alindi: Boolean(r?.image), aciklama: Boolean(r?.caption), mesaj_sayisi: items.length });
+      if (r) {
+        imageData = r.image;
+        caption = r.caption;
+        const kind = r.kind === 'hikaye yanıtı' ? 'bir hikayemize yanıt verdi' : `bir Instagram paylaşımını (${r.kind}) iletti`;
+        if (r.image) {
+          lastResolved.set(senderId, Date.now());
+          notes.push(`Müşteri ${kind}; görseli ekledim. Paylaşım müşterinin sormak/sipariş vermek istediği üründür.${r.caption ? ` Paylaşım açıklaması: "${r.caption.slice(0, 400)}".` : ''}`);
+        } else if (r.caption) {
+          notes.push(`Müşteri ${kind} ama görseli okunamadı. Paylaşım açıklaması: "${r.caption.slice(0, 400)}". Açıklamadaki model/renk bilgisiyle search_products kullan.`);
+        } else if (!text && Date.now() - (lastResolved.get(senderId) || 0) < 90 * 1000) {
+          return; // aynı paylaşımın çift olayı: az önce zaten cevaplandı, "net gelmedi" gibi bir mesaj atma
+        } else {
+          notes.push(`Müşteri ${kind} ama içeriği okunamadı. Özür dileme, "net gelmedi" deme; kısaca ve kibarca "Hangi modeli kastettiğinizi yazar mısınız?" diye sor.`);
         }
       }
-
-      // "Yanıtla" ile bir mesajımıza cevap verdiyse
-      let replyTo = null;
-      if (msg.reply_to?.mid) replyTo = sentMap.get(msg.reply_to.mid) || { unknown: true };
-
-      const reply = await handleDirectMessage({
-        userId: senderId,
-        text: msg.text || '',
-        imageUrl: imageData ? undefined : image?.payload?.url,
-        imageData,
-        notes,
-        replyTo,
-        caption,
-        send: {
-          text: async (t, productId) => {
-            const ids = await ig.sendText(senderId, t);
-            rememberSent(ids, { productId, text: t });
-            noteBotMessage(senderId);
-          },
-          image: async (u, productId) => {
-            const r = await ig.sendImage(senderId, instagramImageUrl(u));
-            rememberSent(r?.message_id, { productId, text: '(ürün fotoğrafı)' });
-            noteBotMessage(senderId);
-          },
-        },
-      });
-      if (reply) {
-        const ids = await ig.sendText(senderId, reply);
-        rememberSent(ids, { text: reply });
-        noteBotMessage(senderId);
-      }
-    } catch (e) {
-      console.error('[dm] hata:', e);
-      try {
-        await ig.sendText(senderId, FALLBACK);
-      } catch {
-        /* gönderilemedi */
-      }
     }
-  });
+
+    // "Yanıtla" ile bir mesajımıza cevap verdiyse
+    const rmid = items.map((i) => i.msg.reply_to?.mid).find(Boolean);
+    const replyTo = rmid ? sentMap.get(rmid) || { unknown: true } : null;
+
+    // Yeni oturumsa (yeniden başlama / insan yazışması) önceki konuşmayı Instagram'dan oku
+    let history = null;
+    if (!hasSession(senderId)) {
+      const mids = new Set(items.map((i) => i.msg.mid));
+      history = (await ig.fetchHistory(senderId, 20)).filter((h) => !mids.has(h.mid));
+    }
+
+    const reply = await handleDirectMessage({
+      userId: senderId,
+      text,
+      imageUrl: imageData ? undefined : lastImg?.payload?.url,
+      imageData,
+      notes,
+      replyTo,
+      caption,
+      history,
+      send,
+    });
+    if (reply) {
+      const ids = await ig.sendText(senderId, reply);
+      rememberSent(ids, { text: reply });
+      noteBotMessage(senderId);
+    }
+  } catch (e) {
+    console.error('[dm] hata:', e);
+    try {
+      await ig.sendText(senderId, FALLBACK);
+    } catch {
+      /* gönderilemedi */
+    }
+  }
 }
+
+const batcher = createBatcher(cfg.batchMs, 6000, (senderId, items) => enqueue(senderId, () => processBatch(senderId, items)));
 
 async function processComment(change) {
   const v = change.value || {};
@@ -309,15 +340,21 @@ app.post('/webhook', (req, res) => {
 
 // ---- FOLLOWUP_HOURS (varsayılan 6) saat sessiz kalan müşterilere tek seferlik hatırlatma (gece dahil, 24 saatlik pencere içinde) ----
 function runFollowups() {
-  for (const userId of dueFollowups()) {
+  for (const { userId, stage } of dueFollowups()) {
     enqueue(userId, async () => {
       try {
-        const text = await buildFollowup(userId);
-        if (!text) return;
+        const { text, imageUrl } = buildFollowup(userId, stage);
+        if (imageUrl) {
+          try {
+            await ig.sendImage(userId, instagramImageUrl(imageUrl));
+          } catch (e) {
+            console.error('[followup] çorap görseli gönderilemedi:', e.message);
+          }
+        }
         await ig.sendText(userId, text);
         noteBotMessage(userId);
-        recordEvent('hatirlatma_gonderildi', { musteri: userId });
-        console.log('[followup] hatırlatma gönderildi:', userId);
+        recordEvent('hatirlatma_gonderildi', { musteri: userId, asama: stage, gorsel: Boolean(imageUrl) });
+        console.log(`[followup] ${stage}. aşama hatırlatma gönderildi:`, userId);
       } catch (e) {
         console.error('[followup] gönderilemedi:', e.message);
         recordEvent('hatirlatma_hata', { musteri: userId, hata: String(e.message).slice(0, 150) });

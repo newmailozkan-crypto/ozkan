@@ -50,7 +50,7 @@ const place = async (uid, input) => {
   script = [{ name: 'submit_order', input }];
   await run(uid, 'başka ürün istemiyorum');
 };
-const order = (items) => ({ name: 'type_order', customer_name: 'Ayşe Yılmaz', phone: '05551234567', address: 'Atatürk Mah. Gül Sok. No 5 Daire 3', city: 'Ankara', district: 'Çankaya', items });
+const order = (items) => ({ name: 'type_order', customer_name: 'Ayşe Yılmaz', phone: '05551234567', mahalle: 'Atatürk', cadde_sokak: 'Gül Sok.', kapi_no: '5', daire_no: '3', city: 'Ankara', district: 'Çankaya', items });
 
 // 1) sipariş -> etiket + hafıza + Telegram
 await place('c1', order([{ product_id: p1.id, size: '37', qty: 1 }]));

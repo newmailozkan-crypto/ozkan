@@ -27,7 +27,7 @@ ok(priceCart(2500, 1).kargo_ucreti_tl === 0, 'tam 2500 TL: kargo ücretsiz');
 
 const t = storeRulesText();
 ok(/wa\.me\/905451348934/.test(t), 'WhatsApp linki kurallarda');
-ok(/önce görürsün, sonra ödersin/.test(t) && !/içeriği belli olmayan paket\)/.test(t), 'şeffaf kargo doğru tanımlı (ürünü görüp sonra ödeme)');
+ok(/paketi açtırmaz/.test(t) && /hızlı şekilde DEĞİŞİM/.test(t) && !/önce görürsün, sonra ödersin/.test(t), 'şeffaf kargo doğru tanımlı (görünür, ödeyip teslim alınır, açılıp denenmez, sonra hızlı değişim)');
 ok(/KAPIDA ÖDEME/.test(t) && /şeffaf/i.test(t) && /DHL/.test(t), 'kapıda ödeme, şeffaf kargo, DHL');
 ok(/çakma.*ASLA/s.test(t), 'kalite kelime yasağı');
 ok(/37\.5/.test(t), 'buçuklu numara kuralı');
@@ -37,34 +37,42 @@ ok(fitNote('Hasır desenli, hafif.') === '', 'özel not yoksa boş');
 
 // hatırlatma (kalıcı, gece dahil, görüldü şartı yok)
 const real = Date.now;
+const due = (u, st) => ai.dueFollowups().some((x) => x.userId === u && (st === undefined || x.stage === st));
 const noon = new Date('2026-10-05T09:00:00Z').getTime(); // 12:00 İstanbul
 Date.now = () => noon;
 ai.noteUserMessage('u2'); ai.noteBotMessage('u2');
 Date.now = () => noon + 5 * 3600e3;
-ok(!ai.dueFollowups().includes('u2'), '5 saat: henüz yok');
+ok(!due('u2'), '5 saat: henüz yok');
 Date.now = () => noon + 6.1 * 3600e3;
-ok(ai.dueFollowups().includes('u2'), '6 saat sonra: görüldü bilgisi olmasa da hatırlatma zamanı');
+ok(due('u2'), '6 saat sonra: görüldü bilgisi olmasa da hatırlatma zamanı');
 Date.now = () => noon + 6.1 * 3600e3 + 1;
 ai.noteUserMessage('u2'); ai.noteBotMessage('u2');
-ok(!ai.dueFollowups().includes('u2'), 'müşteri yazınca sayaç sıfırlanır');
+ok(!due('u2'), 'müşteri yazınca sayaç sıfırlanır');
 // gece yarısına denk gelen
 Date.now = () => noon + 12 * 3600e3; // 00:00 İstanbul
 ai.noteUserMessage('u3'); ai.noteBotMessage('u3');
 Date.now = () => noon + 18.2 * 3600e3; // 06:12 İstanbul
-ok(ai.dueFollowups().includes('u3'), 'saat kaça denk gelirse gelsin (gece/sabah) hatırlatma gider');
+ok(due('u3'), 'saat kaça denk gelirse gelsin (gece/sabah) hatırlatma gider');
 // 24 saatlik pencere
 ai.noteUserMessage('u4'); ai.noteBotMessage('u4');
 Date.now = () => noon + 18.2 * 3600e3 + 24.5 * 3600e3;
-ok(!ai.dueFollowups().includes('u4'), '24 saatlik mesaj penceresi kapanınca gönderilmez');
+ok(!due('u4'), '24 saatlik mesaj penceresi kapanınca gönderilmez');
 // tek seferlik
 Date.now = () => noon + 18.2 * 3600e3 + 1000;
-await ai.buildFollowup('u3');
-ok(!ai.dueFollowups().includes('u3'), 'hatırlatma tek seferlik');
+const f1 = ai.buildFollowup('u3', 1);
+ok(/karar/i.test(f1.text) && !/hediye|249/.test(f1.text) && !f1.imageUrl, '1. aşama: teklifsiz nazik hatırlatma');
+ok(!due('u3'), 'aynı aşama tekrar gitmez');
+Date.now = () => noon + 28.5 * 3600e3;
+ok(due('u3', 2), '16. saatte 2. aşama (hediye teklifi) zamanı');
+const f2 = ai.buildFollowup('u3', 2);
+ok(/249/.test(f2.text) && /Nike/.test(f2.text) && /kısa süreli/.test(f2.text), '2. aşama: 249 ₺ Nike çorap hediye teklifi');
+ok(!due('u3'), 'iki aşama sonrası tekrar yok');
+Date.now = () => noon + 18.2 * 3600e3 + 1000;
 // insan yazışırken hatırlatma yok
 Date.now = () => noon + 30 * 3600e3;
 ai.noteUserMessage('u5'); ai.humanMessage('u5', 'Merhaba, size yardımcı olayım');
 Date.now = () => noon + 30 * 3600e3 + 3600e3;
-ok(!ai.dueFollowups().includes('u5'), 'insan yazışırken bot hatırlatma atmaz');
+ok(!due('u5'), 'insan yazışırken bot hatırlatma atmaz');
 Date.now = real;
 
 // cevap denetimi: yanlış ücretsiz kargo baremi

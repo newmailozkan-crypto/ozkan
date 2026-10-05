@@ -48,7 +48,7 @@ globalThis.__claudeStub = async (req) => {
 };
 const send = { text: async () => {}, image: async () => {} };
 const run = async (uid, text) => { results = []; return ai.handleDirectMessage({ userId: uid, text, send }); };
-const order = { customer_name: 'Ayşe Yılmaz', phone: '05551234567', address: 'Atatürk Mah. Gül Sok. No 5 Daire 3', city: 'Ankara', district: 'Çankaya', items: [{ product_id: tazz.id, size: '37', qty: 1 }] };
+const order = { customer_name: 'Ayşe Yılmaz', phone: '05551234567', mahalle: 'Atatürk', cadde_sokak: 'Gül Sok.', kapi_no: '5', daire_no: '3', city: 'Ankara', district: 'Çankaya', items: [{ product_id: tazz.id, size: '37', qty: 1 }] };
 
 // 1) ikinci ürün (upsell) kapısı
 script = [{ name: 'submit_order', input: order }];
@@ -74,7 +74,7 @@ ok(customers.humanActive('h1', cfg.handoffHours), 'insan yazınca bot devri akti
 ai.observeCustomer('h1', 'olur alalım');
 script = [{ text: 'tamam' }];
 await run('h2', 'merhaba');
-ok(/Müşteri: "37 numara var mı" → Ekibimizin cevabı: "Evet 37 stokta, … numaralı hattan/.test(systems.at(-1)), 'ekibin cevabı öğrenildi (telefon numarası silinerek) ve sonraki sohbetlerde örnek verildi');
+ok(/Müşteri: "37 numara var mı" → Ekibimiz: "Evet 37 stokta, … numaralı hattan/.test(systems.at(-1)), 'ekibin cevabı öğrenildi (telefon numarası silinerek) ve sonraki sohbetlerde örnek verildi');
 script = [{ text: 'sipariş detaylarını alayım' }];
 await run('h1', 'adresim şu');
 ok(/Mağaza yetkilisi \(insan\) müşteriye şunu yazdı/.test(JSON.stringify(lastReqMessages)) && /olur alalım/.test(JSON.stringify(lastReqMessages)), 'devir sonrası bot, insanın ve müşterinin yazdıklarını bağlam olarak biliyor');
