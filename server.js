@@ -4,7 +4,7 @@ import { cfg, checkConfig } from './src/config.js';
 import * as ig from './src/instagram.js';
 import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
-import { handleDirectMessage, handleComment, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup } from './src/ai.js';
+import { handleDirectMessage, handleComment, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup, humanMessage, observeCustomer, humanActive } from './src/ai.js';
 import { sendTelegram } from './src/telegram.js';
 import { resolveShared, isMediaAttachment } from './src/media.js';
 import { initImages, instagramImageUrl, serveImage } from './src/images.js';
@@ -113,7 +113,7 @@ function enqueue(userId, task) {
   queues.set(userId, next);
 }
 
-const FALLBACK = 'Şu an yoğunluk yaşıyoruz, mesajınızı aldık. Birazdan size tekrar dönüş yapacağız 🙏';
+const FALLBACK = `Şu an yoğunluk yaşıyoruz 🙏 Canlı müşteri temsilcimiz size hemen yardımcı olacaktır: ${cfg.whatsappUrl}`;
 
 // Gönderdiğimiz mesajlar (kimlik -> içerik/ürün): müşteri bir mesajımıza "yanıtla" yapınca hangi ürün olduğunu bilmek için
 const sentMap = new Map();
@@ -125,6 +125,23 @@ function rememberSent(ids, info) {
   }
 }
 
+// Hesabımızdan giden mesajın yankısı: botun kendisi değilse bir insan yazmıştır -> bot susar, izler, öğrenir
+function handleEcho(event) {
+  const msg = event.message;
+  const customerId = event.recipient?.id;
+  if (!customerId || String(customerId) === String(cfg.igAccountId)) return;
+  if (msg.mid && isDuplicate('e:' + msg.mid)) return;
+  const t = setTimeout(() => {
+    const hasAtt = (msg.attachments || []).length > 0;
+    if (ig.isOurMessage(customerId, msg.mid, msg.text, hasAtt)) return; // botun kendi mesajı
+    const text = msg.text || (hasAtt ? '[görsel/ek gönderdi]' : '');
+    humanMessage(String(customerId), text);
+    recordEvent('insan_mesaji', { musteri: customerId, metin: String(text).slice(0, 80), bot_sessiz_saat: cfg.handoffHours });
+    console.log('[devir] insan yazdı, bot sessiz ve izlemede:', customerId);
+  }, 4000);
+  t.unref?.();
+}
+
 async function processMessage(event) {
   const senderId = event.sender?.id;
   if (event.read && senderId) {
@@ -132,7 +149,8 @@ async function processMessage(event) {
     return;
   }
   const msg = event.message;
-  if (!senderId || !msg || msg.is_echo) return;
+  if (msg?.is_echo) return handleEcho(event);
+  if (!senderId || !msg) return;
   if (String(senderId) === String(cfg.igAccountId)) return;
   if (msg.mid && isDuplicate('m:' + msg.mid)) return;
 
@@ -146,13 +164,24 @@ async function processMessage(event) {
     recordEvent('mesaj_eki', { kimden: senderId, ekler: attachments.map((a) => `${a.type}:${Object.keys(a.payload || {}).join('/')}`), hikaye_yaniti: Boolean(story), yanitlanan_mesaj: msg.reply_to?.mid ? true : false });
   }
 
+  if (unsupported) {
+    // Ses mesajı dışında (beğeni, çıkartma, konum vb.) hiçbir şey yazma: sipariş akışını bozmasın
+    recordEvent('desteklenmeyen_mesaj', { kimden: senderId, ekler: attachments.map((a) => a.type) });
+    if (attachments.some((a) => a.type === 'audio') && !humanActive(String(senderId), cfg.handoffHours)) {
+      enqueue(senderId, () => ig.sendText(senderId, 'Sesli mesajınızı dinleyemiyorum 🙏 Yazarak iletebilir misiniz?'));
+    }
+    return;
+  }
+
   noteUserMessage(senderId);
+  // Mağaza yetkilisi müşteriyle yazışıyorsa bot cevap vermez, sadece izler
+  if (humanActive(String(senderId), cfg.handoffHours)) {
+    observeCustomer(String(senderId), msg.text || (image ? '[müşteri görsel gönderdi]' : '[müşteri bir paylaşım iletti]'));
+    recordEvent('izleme', { kimden: senderId, metin: String(msg.text || '').slice(0, 80) });
+    return;
+  }
   enqueue(senderId, async () => {
     try {
-      if (unsupported) {
-        await ig.sendText(senderId, 'Mesajınızı aldım 😊 Yazı, ürün görseli veya paylaşımımızı iletirseniz hemen yardımcı olabilirim.');
-        return;
-      }
       ig.typingOn(senderId);
       const prof = await ig.getProfile(senderId);
       setUsername(senderId, prof.username);
@@ -228,7 +257,8 @@ async function processComment(change) {
   enqueue(from.id || commentId, async () => {
     try {
       const media = v.media?.id ? await ig.getMedia(v.media.id) : {};
-      const { publicReply, dm } = await handleComment({ userId: from.id, username: from.username, commentText: v.text, mediaCaption: media.caption });
+      const mediaImageUrl = media.thumbnail_url || (media.media_type && media.media_type !== 'VIDEO' ? media.media_url : null);
+      const { publicReply, dm } = await handleComment({ userId: from.id, username: from.username, commentText: v.text, mediaCaption: media.caption, mediaId: v.media?.id, mediaImageUrl });
       const result = { id: commentId, kimden: from.username || from.id };
       if (publicReply) {
         await ig.replyToComment(commentId, publicReply);
@@ -277,8 +307,8 @@ app.post('/webhook', (req, res) => {
   }
 });
 
-// ---- 6 saat sessiz kalan (mesajımızı görmüş) müşterilere tek seferlik hatırlatma ----
-setInterval(() => {
+// ---- FOLLOWUP_HOURS (varsayılan 6) saat sessiz kalan müşterilere tek seferlik hatırlatma (gece dahil, 24 saatlik pencere içinde) ----
+function runFollowups() {
   for (const userId of dueFollowups()) {
     enqueue(userId, async () => {
       try {
@@ -286,13 +316,17 @@ setInterval(() => {
         if (!text) return;
         await ig.sendText(userId, text);
         noteBotMessage(userId);
+        recordEvent('hatirlatma_gonderildi', { musteri: userId });
         console.log('[followup] hatırlatma gönderildi:', userId);
       } catch (e) {
         console.error('[followup] gönderilemedi:', e.message);
+        recordEvent('hatirlatma_hata', { musteri: userId, hata: String(e.message).slice(0, 150) });
       }
     });
   }
-}, 5 * 60 * 1000).unref?.();
+}
+setInterval(runFollowups, 5 * 60 * 1000).unref?.();
+setTimeout(runFollowups, 60 * 1000).unref?.(); // uyku/yeniden başlatma sonrası kaçan hatırlatmaları yakala
 
 await initImages(); // sharp (webp -> jpeg) hazır olsun, sonra katalog ve görsel hafıza yüklensin
 startCatalogRefresh();

@@ -117,6 +117,7 @@ Bellekte şunlar bulunur:
 | `SITE_CATALOG_URL` | Siteden okuma yedeği için tüm ürünlerin kategori sayfası (örn. `https://siteniz.com/product-category/tum-urunler/`) |
 | `CONVERT_WEBP` | `true` ise webp görseller JPEG'e çevrilip gönderilir (varsayılan kapalı) |
 | `FREE_SHIPPING_MIN`, `SHIPPING_FEE`, `WHATSAPP_URL`, `FOLLOWUP_HOURS`, `FOLLOWUP_MODE` | (Opsiyonel) Ücretsiz kargo barajı (2500), kargo ücreti (100), WhatsApp bağlantısı, hatırlatma saati (6) ve modu (`seen`/`any`). |
+| `HANDOFF_HOURS`, `LEARNED_FILE`, `CUSTOMERS_FILE`, `CANCEL_WINDOW_HOURS` | (Opsiyonel) Mağaza yetkilisi yazdıktan sonra botun sessiz kalacağı saat (varsayılan 3, 0 = kapalı), ekip cevaplarının/müşteri hafızasının dosya yolları, iptal süresi (3). |
 | `CAMPAIGN_RULES` | (Opsiyonel) Örn. `2:300,3:600` → 2+ üründe 300 TL, 3+ üründe 600 TL. Verilirse indirimi sunucu hesaplar, bot değiştiremez. Verilmezse bot indirimi site bilgisinden okur (en fazla %40 ile sınırlı). |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Sipariş bildirimi |
 

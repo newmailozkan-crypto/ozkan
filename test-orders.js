@@ -2,6 +2,7 @@
 import os from 'node:os';
 import path from 'node:path';
 process.env.CUSTOMERS_FILE = path.join(os.tmpdir(), `cust-${Date.now()}.json`);
+process.env.CATALOG_STORE_FILE = path.join(os.tmpdir(), `store-${Date.now()}-${Math.random().toString(36).slice(2)}.dat`);
 process.env.ANTHROPIC_API_KEY = 'x';
 const { cfg } = await import('./src/config.js');
 cfg.tgToken = 't'; cfg.tgChatId = '1';
@@ -43,11 +44,16 @@ globalThis.__claudeStub = async (req) => {
 };
 const send = { text: async () => {}, image: async () => {} };
 const run = async (uid, text, withImage = false) => { results = []; await ai.handleDirectMessage({ userId: uid, text, imageUrl: withImage ? 'https://m.com/img/c.png' : undefined, send }); };
+const place = async (uid, input) => {
+  script = [{ name: 'suggest_upsell', input: { size: '37', count: 5 } }];
+  await run(uid, 'bilgilerim bunlar');
+  script = [{ name: 'submit_order', input }];
+  await run(uid, 'başka ürün istemiyorum');
+};
 const order = (items) => ({ name: 'type_order', customer_name: 'Ayşe Yılmaz', phone: '05551234567', address: 'Atatürk Mah. Gül Sok. No 5 Daire 3', city: 'Ankara', district: 'Çankaya', items });
 
 // 1) sipariş -> etiket + hafıza + Telegram
-script = [{ name: 'submit_order', input: order([{ product_id: p1.id, size: '37', qty: 1 }]) }];
-await run('c1', 'sipariş vermek istiyorum');
+await place('c1', order([{ product_id: p1.id, size: '37', qty: 1 }]));
 ok(results[0]?.ok && results[0].siparis_no, `sipariş alındı (no ${results[0]?.siparis_no})`);
 ok(tg.some((t) => t.includes('YENİ SİPARİŞ') && t.includes('SİPARİŞ VERDİ') && /Kargo ücreti: \+100/.test(t)), 'Telegram siparişi: no, "SİPARİŞ VERDİ" etiketi, 100 TL kargo');
 ok(customers.get('c1').orders.length === 1, 'müşteri kaydında sipariş var');
@@ -62,8 +68,7 @@ ok(tg.some((t) => t.includes('SİPARİŞ İPTAL EDİLDİ') && t.includes('HAZIRL
 ok(customers.get('c1').orders[0].status === 'iptal', 'sipariş durumu iptal');
 
 // 3) 3 saatten sonra iptal reddedilir
-script = [{ name: 'submit_order', input: { ...order([{ product_id: p2.id, size: '37', qty: 1 }]), phone: '05559876543' } }];
-await run('c2', 'sipariş');
+await place('c2', { ...order([{ product_id: p2.id, size: '37', qty: 1 }]), phone: '05559876543' });
 const real = Date.now; const t0 = real();
 Date.now = () => t0 + 4 * 3600e3;
 const n = tg.length;

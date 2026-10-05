@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 process.env.CUSTOMERS_FILE = path.join(os.tmpdir(), `cust-${Date.now()}.json`);
+process.env.CATALOG_STORE_FILE = path.join(os.tmpdir(), `store-${Date.now()}-${Math.random().toString(36).slice(2)}.dat`);
 process.env.ANTHROPIC_API_KEY = 'x';
 process.env.IG_ACCESS_TOKEN = 'tok';
 const { cfg } = await import('./src/config.js');
