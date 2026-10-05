@@ -387,7 +387,7 @@ const wake = () => { const w = waiters; waiters = []; w.forEach((r) => r()); };
 let lastContact = Date.now(); // WordPress'in bota en son ulaştığı an (state sorgusu veya push)
 let alertState = { okSent: false, lastFailAlert: 0 };
 
-export const BOT_VERSION = '4.2-kampanya-alternatif';
+export const BOT_VERSION = '4.3-sepet-sefaf-kargo';
 
 const note = (kaynak, ok, detay) => {
   attempts.unshift({ zaman: new Date().toISOString(), kaynak, ok, detay: redact(detay).slice(0, 400) });

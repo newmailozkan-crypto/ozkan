@@ -1,16 +1,5 @@
 const env = process.env;
 
-function parseRules(str) {
-  // "2:300,3:600" -> [{min:2, discount:300}, {min:3, discount:600}] (büyükten küçüğe)
-  if (!str) return [];
-  return str
-    .split(',')
-    .map((p) => p.trim().split(':'))
-    .filter((p) => p.length === 2 && Number(p[0]) > 0 && Number(p[1]) >= 0)
-    .map(([m, d]) => ({ min: Number(m), discount: Number(d) }))
-    .sort((a, b) => b.min - a.min);
-}
-
 export const cfg = {
   port: Number(env.PORT || 3000),
   storeName: env.STORE_NAME || 'Mağazamız',
@@ -52,8 +41,9 @@ export const cfg = {
   siteProductPath: env.SITE_PRODUCT_PATH || '/product/',
   // Instagram DM'de webp destekleniyor; yine de gerekirse JPEG'e çevirmek için true yapılabilir
   convertWebp: String(env.CONVERT_WEBP || '').toLowerCase() === 'true',
-  // Varsayılan kampanya: 2-3 üründe 300 TL, 4+ üründe 600 TL indirim (toplam). CAMPAIGN_RULES ile değiştirilebilir.
-  campaignRules: parseRules(env.CAMPAIGN_RULES || '4:600,2:300'),
+  // Kampanya: her 2 ürün için toplam 300 TL indirim (2'li 300, 4'lü 600, 6'lı 900 ...). Yalnızca TEK siparişte geçerli.
+  campaignStepQty: Number(env.CAMPAIGN_STEP_QTY || 2),
+  campaignStepDiscount: Number(env.CAMPAIGN_STEP_DISCOUNT || 300),
   // Sepet (indirim sonrası) bu tutarın altındaysa sabit kargo ücreti eklenir
   freeShippingMin: Number(env.FREE_SHIPPING_MIN || 2500),
   shippingFee: Number(env.SHIPPING_FEE || 100),
