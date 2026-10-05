@@ -1137,3 +1137,5 @@ Görevin: yorum için iki çıktı üret. Yalnızca JSON döndür:
   }
   return { publicReply, dm };
 }
+
+export const humanActive = (userId, hours) => customers.humanActive(userId, hours);
