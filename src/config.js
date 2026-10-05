@@ -63,8 +63,9 @@ export const cfg = {
   cancelWindowHours: Number(env.CANCEL_WINDOW_HOURS || 3),
   customersFile: env.CUSTOMERS_FILE || 'data/customers.json',
   followupHours: Number(env.FOLLOWUP_HOURS ?? 6),
-  // seen = sadece "görüldü" bilgisi geldiyse; any = görüldü bilgisi gelmese de son mesajımızdan itibaren
-  followupMode: (env.FOLLOWUP_MODE || 'seen').toLowerCase(),
+  // Mağaza yetkilisi (insan) müşteriye yazdıktan sonra bot bu kadar saat sessiz kalıp sadece izler
+  handoffHours: Number(env.HANDOFF_HOURS ?? 3),
+  learnedFile: env.LEARNED_FILE || 'data/learned.json',
 
   tgToken: env.TELEGRAM_BOT_TOKEN,
   tgChatId: env.TELEGRAM_CHAT_ID,

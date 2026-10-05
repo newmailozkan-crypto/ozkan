@@ -110,3 +110,82 @@ export function contextText(userId) {
 }
 
 export const persist = save;
+
+// ---------- konuşma durumu (hatırlatma ve insan devri için kalıcı) ----------
+export const all = () => db;
+
+const convo = (userId) => {
+  const r = rec(userId);
+  r.convo = r.convo || {};
+  return r.convo;
+};
+
+export function touchUser(userId) {
+  const c = convo(userId);
+  c.lastUserAt = Date.now();
+  c.followupSent = false;
+  save();
+}
+export function touchBot(userId) {
+  convo(userId).lastBotAt = Date.now();
+  save();
+}
+export function markFollowupSent(userId) {
+  convo(userId).followupSent = true;
+  save();
+}
+// Mağaza yetkilisi (insan) müşteriyle yazıştığında bot belirli süre susar ve sadece izler
+export function markHuman(userId) {
+  convo(userId).humanAt = Date.now();
+  save();
+}
+export function humanActive(userId, hours) {
+  const at = get(userId)?.convo?.humanAt;
+  return Boolean(at && hours > 0 && Date.now() - at < hours * 3600 * 1000);
+}
+
+// Son konuşma satırları (bot yeniden başlasa da hatırlatma mesajı bağlama uygun yazılabilsin)
+export function pushRecent(userId, role, text) {
+  const t = String(text || '').trim().slice(0, 300);
+  if (!t) return;
+  const r = rec(userId);
+  r.recent = r.recent || [];
+  r.recent.push({ r: role, t });
+  if (r.recent.length > 8) r.recent.shift();
+  save();
+}
+export const recent = (userId) => get(userId)?.recent || [];
+
+// ---------- ekibin gerçek cevaplarından öğrenme ----------
+let learned = [];
+try {
+  learned = JSON.parse(fs.readFileSync(cfg.learnedFile, 'utf8'));
+} catch {
+  /* dosya yok */
+}
+let learnTimer = null;
+const scrub = (t) => String(t || '').replace(/\d[\d\s().-]{6,}\d/g, '…').slice(0, 300); // telefon/numara benzeri dizileri sil
+
+export function addLearned(q, a) {
+  const Q = scrub(q);
+  const A = scrub(a);
+  if (!Q || !A || A.length < 8) return;
+  learned.push({ q: Q, a: A, ts: Date.now() });
+  if (learned.length > 60) learned.shift();
+  clearTimeout(learnTimer);
+  learnTimer = setTimeout(() => {
+    try {
+      fs.mkdirSync(path.dirname(cfg.learnedFile), { recursive: true });
+      fs.writeFileSync(cfg.learnedFile, JSON.stringify(learned));
+    } catch (e) {
+      console.error('[learned] yazılamadı:', e.message);
+    }
+  }, 500);
+  learnTimer.unref?.();
+}
+
+export function learnedText(n = 25) {
+  if (!learned.length) return '';
+  const rows = learned.slice(-n).map((x) => `- Müşteri: "${x.q}" → Ekibimizin cevabı: "${x.a}"`);
+  return `## EKİBİMİZİN GERÇEK MÜŞTERİ CEVAPLARI (üslup/yaklaşım örneği)\nAşağıdakiler ekibimizin müşterilerle yazışmalarından alınmış örneklerdir. Tonu ve yaklaşımı öğren; ancak MAĞAZA KURALLARI ile çelişen bir bilgi/fiyat/kampanya görürsen MAĞAZA KURALLARI geçerlidir. Kişiye özel bilgileri başkasına söyleme.\n${rows.join('\n')}`;
+}

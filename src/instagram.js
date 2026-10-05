@@ -44,20 +44,42 @@ function chunkText(text, max = 900) {
 }
 
 // Gönderilen mesajların kimliklerini döndürür (müşteri "yanıtla" yaptığında hangi mesaja yanıt verdiğini bilmek için)
+// Botun kendi gönderdiği mesajları (yankı/echo olaylarında) insan mesajından ayırmak için son gönderilenleri tutar
+const sentLog = [];
+const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+function noteSent(recipientId, text, mid) {
+  sentLog.push({ to: String(recipientId), text: norm(text), mid, at: Date.now() });
+  if (sentLog.length > 300) sentLog.shift();
+}
+export function isOurMessage(recipientId, mid, text, hasAttachment) {
+  const now = Date.now();
+  const nt = norm(text);
+  return sentLog.some((e) => {
+    if (now - e.at > 10 * 60 * 1000) return false;
+    if (mid && e.mid === mid) return true;
+    if (e.to !== '*' && e.to !== String(recipientId)) return false;
+    if (nt) return e.text && (e.text === nt || e.text.startsWith(nt) || nt.startsWith(e.text));
+    return hasAttachment && !e.text && now - e.at < 90 * 1000; // görsel yankısı
+  });
+}
+
 export async function sendText(recipientId, text) {
   const ids = [];
   for (const part of chunkText(text)) {
     const r = await call('/me/messages', { recipient: { id: recipientId }, message: { text: part } });
+    noteSent(recipientId, part, r?.message_id);
     if (r?.message_id) ids.push(r.message_id);
   }
   return ids;
 }
 
 export async function sendImage(recipientId, url) {
-  return call('/me/messages', {
+  const r = await call('/me/messages', {
     recipient: { id: recipientId },
     message: { attachment: { type: 'image', payload: { url } } },
   });
+  noteSent(recipientId, '', r?.message_id);
+  return r;
 }
 
 export async function typingOn(recipientId) {
@@ -75,10 +97,13 @@ export async function replyToComment(commentId, text) {
 
 // Yorum sahibine DM (özel yanıt): yorum başına 1 kez, 7 gün içinde
 export async function privateReply(commentId, text) {
-  return call('/me/messages', {
+  const part = chunkText(text)[0];
+  const r = await call('/me/messages', {
     recipient: { comment_id: commentId },
-    message: { text: chunkText(text)[0] },
+    message: { text: part },
   });
+  noteSent('*', part, r?.message_id); // alıcı kimliği bilinmiyor: yankıyı botun mesajı say
+  return r;
 }
 
 export async function getProfile(igsid) {
