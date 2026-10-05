@@ -33,7 +33,7 @@ export const visualCount = () => cache.size;
 
 const PROMPT = `Bu bir ürün (ayakkabı, bot, çanta vb.) fotoğrafı. Ürünü kataloglama için tanımla.
 Yalnızca JSON döndür, Türkçe yaz:
-{"tur":"bot|çizme|sneaker|spor ayakkabı|terlik|topuklu|babet|sandalet|loafer|diğer","renk":"ana renk","stil":"2-4 kelimelik stil (örn. platform kürklü mini bot, retro sneaker)","taban":"düz|platform|topuklu|kalın taban|...","materyal":"süet|deri|kumaş|...","desen":"düz|leopar|desenli|...","ozet":"en fazla 18 kelimelik görsel özet"}`;
+{"tur":"bot|çizme|sneaker|spor ayakkabı|terlik|topuklu|babet|sandalet|loafer|diğer","renk":"ana renk","stil":"2-4 kelimelik stil (örn. platform kürklü mini bot, retro sneaker)","taban":"düz|platform|topuklu|kalın taban|...","materyal":"süet|deri|kumaş|...","desen":"düz|leopar|desenli|...","logo":"görünen logo/şerit/işaret (örn. Nike tik, New Balance N, 3 şerit, Puma figürü, yok)","ozet":"en fazla 18 kelimelik görsel özet"}`;
 
 function parseDescription(r) {
   const t = r.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
@@ -47,16 +47,17 @@ function parseDescription(r) {
     taban: String(j.taban || ''),
     materyal: String(j.materyal || ''),
     desen: String(j.desen || ''),
+    logo: String(j.logo || ''),
     ozet: String(j.ozet || ''),
   };
-  v.text = [v.tur, v.renk, v.stil, v.taban, v.materyal, v.desen, v.ozet].filter(Boolean).join(' ');
+  v.text = [v.tur, v.renk, v.stil, v.taban, v.materyal, v.desen, v.logo, v.ozet].filter(Boolean).join(' ');
   return v;
 }
 
 async function describeImg(img) {
   const r = await create({
     model: cfg.indexModel,
-    max_tokens: 200,
+    max_tokens: 240,
     messages: [
       {
         role: 'user',
@@ -70,7 +71,7 @@ async function describeImg(img) {
   return parseDescription(r);
 }
 
-const describe = async (url) => describeImg(await getImage(url, { maxSide: 320 }));
+const describe = async (url) => describeImg(await getImage(url, { maxSide: 384 }));
 
 // Müşterinin gönderdiği fotoğrafı, katalogdaki görsel hafızayla AYNI sözlükle tanımlar (hızlı model ile)
 export const describeCustomerImage = (img) => describeImg(img);

@@ -14,6 +14,8 @@ export const cfg = {
   model: env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001',
   // Görsel eşleştirme için ayrı model istenirse (örn. sohbet Haiku, görsel Sonnet). Boşsa CLAUDE_MODEL kullanılır.
   visionModel: env.VISION_MODEL || env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001',
+  // Görsel eşleşme emin değilse (güven düşük/iki aday yakın) bu güçlü model son kontrolü yapar. Boş bırakırsanız kontrol kapalı.
+  visionStrongModel: env.VISION_STRONG_MODEL ?? 'claude-sonnet-5-5',
   // Ürün görsellerini tek seferlik tanımlayan model (ucuz olanı yeterli)
   indexModel: env.INDEX_MODEL || 'claude-haiku-4-5-20251001',
   // Instagram'ın görsellere ulaşacağı herkese açık adres (Render bunu RENDER_EXTERNAL_URL olarak kendisi verir)

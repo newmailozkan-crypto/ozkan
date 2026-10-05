@@ -387,7 +387,7 @@ const wake = () => { const w = waiters; waiters = []; w.forEach((r) => r()); };
 let lastContact = Date.now(); // WordPress'in bota en son ulaştığı an (state sorgusu veya push)
 let alertState = { okSent: false, lastFailAlert: 0 };
 
-export const BOT_VERSION = '4.3-sepet-sefaf-kargo';
+export const BOT_VERSION = '4.4-gorsel-dogrulama';
 
 const note = (kaynak, ok, detay) => {
   attempts.unshift({ zaman: new Date().toISOString(), kaynak, ok, detay: redact(detay).slice(0, 400) });
@@ -789,7 +789,7 @@ function diversify(list, limit) {
 
 const styleSet = (p) =>
   new Set(
-    asciiTokens([p.category, p.visual?.tur, p.visual?.stil, p.visual?.taban, p.visual?.materyal, p.visual?.desen].filter(Boolean).join(' ')).filter((t) => t.length > 2)
+    asciiTokens([p.category, p.visual?.tur, p.visual?.stil, p.visual?.taban, p.visual?.materyal, p.visual?.desen, p.visual?.logo].filter(Boolean).join(' ')).filter((t) => t.length > 2)
   );
 
 // Benzerlik: kategori + görsel hafızadaki tür/stil/taban/materyal/desen örtüşmesi + fiyat yakınlığı
@@ -832,7 +832,7 @@ export function suggestForSize(size, excludeIds = [], count = 8, preferCategory 
 // görsel karşılaştırmaya girecek aday ürünleri daraltır. En iyi birkaç modelin diğer renkleri de aday listesine eklenir.
 export function shortlistByVisual(desc, hint = '', limit = 14) {
   const toks = (k) => new Set(asciiTokens(desc?.[k] || '').filter((t) => t.length > 2));
-  const [tur, renk, stil, taban, mat, desen] = ['tur', 'renk', 'stil', 'taban', 'materyal', 'desen'].map(toks);
+  const [tur, renk, stil, taban, mat, desen, logo] = ['tur', 'renk', 'stil', 'taban', 'materyal', 'desen', 'logo'].map(toks);
   const hintTok = new Set(asciiTokens(hint).filter((t) => t.length > 2));
   const scored = products
     .filter((p) => p.images.length)
@@ -849,11 +849,12 @@ export function shortlistByVisual(desc, hint = '', limit = 14) {
         ov(taban, v.taban, 1);
         ov(mat, v.materyal, 1);
         ov(desen, v.desen, 1);
+        ov(logo, v.logo, 3); // marka/logo en ayırt edici ipucu
       } else {
         ov(tur, `${p.title} ${p.category}`, 2); // görsel tanımı henüz yoksa başlık/kategoriye bak
         ov(renk, p.color, 2);
       }
-      ov(hintTok, `${p.title} ${p.modelName} ${p.color}`, 2);
+      ov(hintTok, `${p.title} ${p.modelName} ${p.color}`, 4);
       return { p, s };
     })
     .sort((a, b) => b.s - a.s);

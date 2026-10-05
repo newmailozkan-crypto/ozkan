@@ -177,6 +177,7 @@ function staticPrompt() {
    - "eslesti_beden_sorulmali": numarasını sor.
    - NUMARA YOK (beden_yok_diger_renk_var / model_bedeni_yok_benzerler_var / katalogda_yok): net söyle: "Bu modelde X numara bulunmuyor, mevcut numaralar: (araç sonucundaki model_numaralari)". HEMEN ARDINDAN aynı mesajda önce aynı modelin diğer renklerini, yoksa tarz olarak en benzer modelleri öner (fotoğraflarını araç gönderir) ve tek kısa soru sor. "Yok" deyip sessiz kalma; alternatifleri göndermeden bu cümleyi kurma: MUTLAKA önce find_alternatives çağır. Müşteri birden çok ürün sorduysa HER ürün için ayrı find_alternatives çağır; bir ürünün sonucunu başka ürüne atfetme, ürünleri adıyla ayır.
    Metinle ürün söylenirse search_products, sonra find_alternatives aynı mantıkla. Sadece araçtan dönen ürünleri öner.
+   Müşteri "3'lü alımda fiyat nedir / 2 tane alırsam" gibi çoklu alım fiyatı sorarsa: ürünü belirle (paylaşılan hikaye/gönderi/fotoğraf dahil), calc_cart ile o adet için tutarı hesapla ve kısaca söyle (ürün birim fiyatı, kampanya indirimi, kargo, ödenecek toplam), ardından numarasını sor.
 2. Numarasını erken öğren; sadece numarası stokta olanları öner.
 3. Buçuklu numara isterse bir üst tam numarayı öner. Siparişten önce her ürünün kalıbını (kalip_notu) kısaca söyle.
 4. Müşteri almaya karar verince bilgileri TEK mesajla, şu biçimde iste:
@@ -366,18 +367,23 @@ const textOf = (resp) => resp.content.filter((b) => b.type === 'text').map((b) =
 // ---------- görsel eşleştirme ----------
 const imgBlock = (s) => ({ type: 'image', source: { type: 'base64', media_type: s.lastImage.mediaType, data: s.lastImage.b64 } });
 
-const MAX_CANDS = 10; // tek seferde görsel olarak karşılaştırılacak en fazla ürün
+const MAX_CANDS = 10;
+const MATCH_RULE = 'Müşterinin görselindeki ayakkabıyla AYNI modeli arıyoruz. Marka/logo (Nike tik, New Balance N, 3 şerit, Puma figürü vb.), taban yapısı ve kalınlığı, ayakkabının silueti, panel/dikiş düzeni ve renk blokları gibi AYIRT EDİCİ detaylara bak; sadece genel renge göre eşleştirme. Birebir aynı ürüne yüksek (0.85+), aynı modelin başka rengine orta (0.5-0.7), yalnızca benzer tarza düşük (0.3 altı) puan ver. Emin değilsen yüksek puan verme.'; // tek seferde görsel olarak karşılaştırılacak en fazla ürün
 
 // Müşteri görseli ile aday ürün görsellerini tek çağrıda karşılaştırır; her adaya 0-1 benzerlik puanı verir (yüksekten düşüğe)
-async function rankByVision(session, cands, instruction) {
-  const withImg = cands.filter((c) => c.images.length).slice(0, MAX_CANDS);
+async function rankByVision(session, cands, instruction, opts = {}) {
+  const { model = cfg.visionModel, perCand = 1, max = MAX_CANDS, maxSide = 384, tag = 'gorsel_eslestirme' } = opts;
+  const withImg = cands.filter((c) => c.images.length).slice(0, max);
   if (!withImg.length) return [];
   try {
     // Aday görselleri kendimiz indirip küçültürüz; hafızadan (önbellekten) gelir, bu yüzden hızlıdır
     const loaded = await Promise.all(
       withImg.map(async (c) => {
         try {
-          return { c, img: await getImage(c.images[0], { maxSide: 384 }) };
+          const imgs = await Promise.all(c.images.slice(0, perCand).map((u) => getImage(u, { maxSide }).catch(() => null)));
+          const good = imgs.filter(Boolean);
+          if (!good.length) throw new Error('görsel yok');
+          return { c, imgs: good };
         } catch (e) {
           console.error('[rankByVision] aday görseli alınamadı:', c.id, e.message);
           return null;
@@ -387,15 +393,15 @@ async function rankByVision(session, cands, instruction) {
     const ok = loaded.filter(Boolean);
     if (!ok.length) return null;
     const content = [{ type: 'text', text: 'MÜŞTERİNİN GÖRSELİ:' }, imgBlock(session), { type: 'text', text: 'ADAY ÜRÜNLER:' }];
-    for (const { c, img } of ok) {
+    for (const { c, imgs } of ok) {
       content.push({ type: 'text', text: `Aday id=${c.id} | ${c.title} | model: ${c.modelName || '-'} | renk: ${c.color || '-'}` });
-      content.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.b64 } });
+      for (const img of imgs) content.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.b64 } });
     }
     content.push({
       type: 'text',
       text: `${instruction} HER adayı puanla (hiçbiri benzemiyorsa düşük puan ver). Yalnızca JSON: {"eslesmeler":[{"id":"","guven":0.0-1.0,"neden":"kısa"}]}`,
     });
-    const r = await create({ model: cfg.visionModel, max_tokens: 700, messages: [{ role: 'user', content }] }, 'gorsel_eslestirme');
+    const r = await create({ model, max_tokens: 700, messages: [{ role: 'user', content }] }, tag);
     const j = extractJson(textOf(r));
     return (j?.eslesmeler || [])
       .map((m) => ({ p: catalog.getProduct(m.id), guven: Number(m.guven) || 0, neden: m.neden }))
@@ -422,14 +428,36 @@ async function identifyImage(session, hint) {
     } catch (e) {
       console.error('[identify] görsel tanımlanamadı:', e.message);
     }
-    cands = catalog.shortlistByVisual(desc, hint, MAX_CANDS);
+    cands = catalog.shortlistByVisual(desc, hint, MAX_CANDS * 2);
   }
-  let ranked = await rankByVision(
-    session,
-    cands,
-    'Müşterinin görselindeki ürünle AYNI modeli arıyoruz: birebir aynı ürüne yüksek, aynı modelin başka rengine orta, yalnızca benzer tarza düşük puan ver.'
-  );
-  if (ranked === null) ranked = cands.slice(0, 6).map((p) => ({ p, guven: 0.3, neden: 'görsel karşılaştırma yapılamadı' }));
+  // 1. aşama: hızlı model, adayları 10'arlı gruplar halinde puanlar (20 aday)
+  const groups = [];
+  for (let i = 0; i < cands.length; i += MAX_CANDS) groups.push(cands.slice(i, i + MAX_CANDS));
+  const parts = await Promise.all(groups.map((g) => rankByVision(session, g, MATCH_RULE)));
+  let ranked;
+  if (parts.every((x) => x === null)) ranked = cands.slice(0, 6).map((p) => ({ p, guven: 0.3, neden: 'görsel karşılaştırma yapılamadı' }));
+  else ranked = parts.filter(Boolean).flat().sort((a, b) => b.guven - a.guven);
+
+  // 2. aşama: emin değilsek (güven düşük ya da en iyi iki FARKLI model yakın) güçlü model en iyi adayları 2'şer görselle yeniden değerlendirir
+  const top = ranked[0];
+  const second = ranked.find((r) => top && r.p.modelKey !== top.p.modelKey);
+  const unsure = !top || top.guven < 0.85 || (second && top.guven - second.guven < 0.2);
+  if (cfg.visionStrongModel && unsure && ranked.length && ranked[0].neden !== 'görsel karşılaştırma yapılamadı') {
+    const pick = [];
+    const seen = new Set();
+    for (const r of ranked) {
+      if (r.guven < 0.2) break;
+      if (!seen.has(r.p.id)) { seen.add(r.p.id); pick.push(r.p); }
+      if (pick.length >= 6) break;
+    }
+    if (pick.length) {
+      const strong = await rankByVision(session, pick, MATCH_RULE, { model: cfg.visionStrongModel, perCand: 2, max: 6, maxSide: 448, tag: 'gorsel_dogrulama' });
+      if (strong?.length) {
+        const ids = new Set(strong.map((x) => x.p.id));
+        ranked = [...strong, ...ranked.filter((r) => !ids.has(r.p.id)).map((r) => ({ ...r, guven: Math.min(r.guven, 0.4) }))];
+      }
+    }
+  }
   return { desc, ranked };
 }
 
@@ -983,6 +1011,20 @@ async function agentLoop({ session, userId, send, tools }) {
 
     if (resp.stop_reason !== 'tool_use') {
       let out = textOf(resp);
+      if (!out.trim()) {
+        if (!session.emptyRetry) {
+          session.emptyRetry = true;
+          console.warn('[agent] boş cevap, tekrar isteniyor');
+          session.messages[session.messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: '...' }] };
+          session.messages.push({ role: 'user', content: '[SİSTEM NOTU: Cevabın boş kaldı. Müşterinin son mesajını cevapla: gerekiyorsa araçları kullan, sonra kısa ve nazik bir mesaj yaz.]' });
+          continue;
+        }
+        session.emptyRetry = false;
+        out = 'Merhaba efendim 😊 Hangi model ve numarayla ilgileniyorsunuz? Hemen yardımcı olayım.';
+        session.messages[session.messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: out }] };
+        return out;
+      }
+      session.emptyRetry = false;
       if (resp.stop_reason === 'max_tokens') out = trimToSentence(out); // çok uzun cevabı son tam cümlede kes
       if (!photoSent && !nudged && send && NO_SIZE.test(out) && !catalog.isEmpty()) {
         nudged = true;
