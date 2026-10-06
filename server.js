@@ -5,7 +5,7 @@ import * as ig from './src/instagram.js';
 import { usageReport } from './src/claude.js';
 import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
-import { handleDirectMessage, handleComment, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup, humanMessage, observeCustomer, humanActive, hasSession } from './src/ai.js';
+import { handleDirectMessage, handleComment, warmProductHashes, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup, humanMessage, observeCustomer, humanActive, hasSession } from './src/ai.js';
 import { sendTelegram } from './src/telegram.js';
 import { resolveShared, isMediaAttachment } from './src/media.js';
 import { createBatcher } from './src/batch.js';
@@ -367,6 +367,8 @@ setTimeout(runFollowups, 60 * 1000).unref?.(); // uyku/yeniden başlatma sonras�
 
 await initImages(); // sharp (webp -> jpeg) hazır olsun, sonra katalog ve görsel hafıza yüklensin
 startCatalogRefresh();
+setInterval(() => warmProductHashes().catch(() => {}), 15 * 60 * 1000).unref?.();
+setTimeout(() => warmProductHashes().catch(() => {}), 45 * 1000).unref?.();
 startSiteRefresh();
 
 app.listen(cfg.port, () => console.log(`[server] ${cfg.port} portunda dinleniyor`));
