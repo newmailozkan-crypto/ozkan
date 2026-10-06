@@ -166,6 +166,9 @@ function staticPrompt() {
 - Numarası stokta olmayan ürünü satmaya çalışma. Katalogdaki her ürün bir "model + renk"tir; aynı "model" alanı = aynı modelin diğer renkleri.
 - "Yok" demeden önce emin ol (search_products ile tekrar ara). "KATALOG_BOS" dönerse "yok" DEME, notundaki talimatı uygula.
 
+## YAZIM HATALARI
+- Müşterinin yazım hatalarını/kısaltmalarını sessizce düzeltip anla (fiat/fyat/fıyat/fiyad = fiyat; kaça/kaç para/ne kadar = fiyat sorusu; nmara/numra = numara; kargo/kapıda ödeme vb.). "Fiat" bir marka değil, "fiyat"ın yanlış yazımıdır. Yazım hatası hakkında ASLA yorum yapma, espri yapma, düzeltme yapma; doğrudan sorusunu cevapla. Her zaman kibar ve nazik ol.
+
 ## ÜRÜN GÖSTERME
 - Model/öneri/alternatif istenirse "önereyim mi?" diye sorma; show_models ile fotoğraflı önerileri hemen gönder. Araçlar fotoğrafları kendisi gönderir; "fotograflar_gonderildi" boşsa fotoğraf gönderdim DEME.
 - Müşteri senin önerdiğin ürünü seçtiyse (yanıtla yaptı, adını yazdı, fotoğrafı geri gönderdi, sistem notunda "SEÇİLEN ÜRÜN" var) ürün BELLİDİR: tekrar fotoğraf isteme, "benzer model" deme; numarası belliyse find_alternatives ile stok bak, değilse sadece numarasını sor ve sipariş adımlarına geç.
@@ -175,8 +178,10 @@ function staticPrompt() {
 1. Ürün görseli gelirse HEMEN match_customer_image (numara belliyse size ver). Ürün bulunca fotoğraf otomatik gider; fiyatı söyle, numarasını sor (kısa). Sonuç:
    - "stokta": kısa ikna + "Siparişinizi oluşturayım mı?".
    - "eslesti_beden_sorulmali": numarasını sor.
+   - "belirsiz_adaylar" / "katalogda_yok": fotoğraftaki ürünü KESİN bulamadık. Müşteriye ASLA "bizde yok / bulunmuyor" deme (ürün bizde olabilir). "Tam netleştirmek için en çok benzeyen modellerimizi gönderdim; aradığınız bunlardan biri mi? Modelin adını da yazabilirsiniz 😊" de.
    - NUMARA YOK (beden_yok_diger_renk_var / model_bedeni_yok_benzerler_var / katalogda_yok): net söyle: "Bu modelde X numara bulunmuyor, mevcut numaralar: (araç sonucundaki model_numaralari)". HEMEN ARDINDAN aynı mesajda önce aynı modelin diğer renklerini, yoksa tarz olarak en benzer modelleri öner (fotoğraflarını araç gönderir) ve tek kısa soru sor. "Yok" deyip sessiz kalma; alternatifleri göndermeden bu cümleyi kurma: MUTLAKA önce find_alternatives çağır. Müşteri birden çok ürün sorduysa HER ürün için ayrı find_alternatives çağır; bir ürünün sonucunu başka ürüne atfetme, ürünleri adıyla ayır.
    Metinle ürün söylenirse search_products, sonra find_alternatives aynı mantıkla. Sadece araçtan dönen ürünleri öner.
+   Müşteri "3'lü alımda fiyat nedir / 2 tane alırsam" gibi çoklu alım fiyatı sorarsa: ürünü belirle (paylaşılan hikaye/gönderi/fotoğraf dahil), calc_cart ile o adet için tutarı hesapla ve kısaca söyle (ürün birim fiyatı, kampanya indirimi, kargo, ödenecek toplam), ardından numarasını sor.
 2. Numarasını erken öğren; sadece numarası stokta olanları öner.
 3. Buçuklu numara isterse bir üst tam numarayı öner. Siparişten önce her ürünün kalıbını (kalip_notu) kısaca söyle.
 4. Müşteri almaya karar verince bilgileri TEK mesajla, şu biçimde iste:
@@ -187,9 +192,9 @@ function staticPrompt() {
    • İl, ilçe"
    Eksik gelirse yalnızca eksiği sor. Adreste MAHALLE, CADDE/SOKAK, KAPI NO zorunlu; apartmansa DAİRE NO da zorunlu (kapı no verip daire no vermezse daireyi sor). Müşteri "iş yeri/müstakil/dükkan" derse daire sorma, daire_yok=true ile sorunsuz devam et. Müşteri iş yeri adı gibi bilinen bir yer söylerse adres_notu olarak ekle (adresin sonuna parantezle yazılır).
 5. Bilgiler tamamlanınca UPSELL (ZORUNLU, iki adım): hemen siparişi bitirme.
-   a) Önce offer_campaign çağır ve FOTOĞRAFSIZ, kısa şunu sor: "Siparişiniz hazır 😊 Kampanyamız var: 2. ürüne 300 TL indirim (aynı siparişte 4 ürüne toplam 600 TL) 🎁 Bir ürün daha eklemek ister misiniz?" Cevabı BEKLE (sistem, cevap gelmeden siparişi engeller).
+   a) Önce offer_campaign çağır ve FOTOĞRAFSIZ, kısa şunu sor: "Siparişiniz hazır 😊 Kampanyamız var: her 2 ürüne 300 TL indirim (2'li 300 TL, 4'lü 600 TL, 6'lı 900 TL, aynı siparişte) 🎁 Bir ürün daha eklemek ister misiniz?" Cevabı BEKLE (sistem, cevap gelmeden siparişi engeller).
    b) Müşteri "evet/olur/bir tane daha alabilirim" derse suggest_upsell çağır (müşterinin numarasında stokta olan, tarzına uygun 5-6 model fotoğraflı gider) ve "Hangisini beğendiniz?" diye sor. Beğenmezse suggest_upsell'i tekrar çağır (daha önce gösterilenler otomatik hariç tutulur, 5-6 yeni model). İstemezse ısrar etme, sipariş özetine geç.
-   Ekleme olursa calc_cart; 3 ürünse 4.'ye, sepet 2.500 TL altındaysa ücretsiz kargo için ek ürüne teşvik et (calc_cart ipuçları).
+   Ekleme olursa calc_cart; tek sayıdaysa bir sonraki çifte (3→4, 5→6), sepet 2.500 TL altındaysa ücretsiz kargo için ek ürüne teşvik et (calc_cart ipuçları).
 6. Kısa sipariş özeti (ürün, numara, indirim, kargo, ödenecek toplam, adres, kapıda ödeme) yaz, onay al, submit_order çağır (bir sipariş için bir kez).
 7. Sipariş alınınca: teşekkür, 24 saatte paketlenip SMS ile bilgi verileceği, kapıda ödeme + şeffaf kargo, ürünü teslim alınca memnuniyet fotoğrafı beklediğimiz (📸). Hepsi 3-4 kısa cümlede.
 - İndirim yalnızca TEK siparişte birlikte alınan ürünlere uygulanır. Müşteri ayrı ayrı sipariş verirse indirimler birleşmez; kampanya için ürünlerin aynı siparişte olması gerektiğini söyle (önceki sipariş 3 saat içindeyse isterse iptal edip hepsini tek siparişte toplayabileceğini belirt).
@@ -263,7 +268,7 @@ const TOOLS = [
   },
   {
     name: 'offer_campaign',
-    description: "Sipariş bilgileri tamamlanınca ÇAPRAZ SATIŞ ilk adımı: kampanyayı (2. ürüne 300 TL, 4 ürüne 600 TL) müşteriye sunmadan önce çağır. Fotoğraf göndermez. Sonra kısa kampanya sorusunu yaz ve cevabı bekle.",
+    description: "Sipariş bilgileri tamamlanınca ÇAPRAZ SATIŞ ilk adımı: kampanyayı (her 2 ürüne 300 TL: 2'li 300, 4'lü 600, 6'lı 900) müşteriye sunmadan önce çağır. Fotoğraf göndermez. Sonra kısa kampanya sorusunu yaz ve cevabı bekle.",
     input_schema: { type: 'object', properties: {} },
   },
   {
@@ -290,7 +295,7 @@ const TOOLS = [
   },
   {
     name: 'calc_cart',
-    description: 'Sepet tutarını hesaplar: kampanya indirimi (2. ürün 300 TL, 4 ürün 600 TL), kargo ücreti (2500 TL altı 100 TL) ve ödenecek toplam. Ürün sayısı/sepet değiştikçe ve sipariş özetinden önce MUTLAKA kullan; ipuçlarına göre 4. ürüne veya ücretsiz kargoya teşvik et.',
+    description: 'Sepet tutarını hesaplar: kampanya indirimi (her 2 ürüne 300 TL), kargo ücreti (2500 TL altı 100 TL) ve ödenecek toplam. Ürün sayısı/sepet değiştikçe ve sipariş özetinden önce MUTLAKA kullan; ipuçlarına göre 4. ürüne veya ücretsiz kargoya teşvik et.',
     input_schema: {
       type: 'object',
       properties: {
@@ -366,18 +371,23 @@ const textOf = (resp) => resp.content.filter((b) => b.type === 'text').map((b) =
 // ---------- görsel eşleştirme ----------
 const imgBlock = (s) => ({ type: 'image', source: { type: 'base64', media_type: s.lastImage.mediaType, data: s.lastImage.b64 } });
 
-const MAX_CANDS = 10; // tek seferde görsel olarak karşılaştırılacak en fazla ürün
+const MAX_CANDS = 10;
+const MATCH_RULE = 'Müşterinin görselindeki ayakkabıyla AYNI modeli arıyoruz. Marka/logo (Nike tik, New Balance N, 3 şerit, Puma figürü vb.), taban yapısı ve kalınlığı, ayakkabının silueti, panel/dikiş düzeni ve renk blokları gibi AYIRT EDİCİ detaylara bak; sadece genel renge göre eşleştirme. Birebir aynı ürüne yüksek (0.85+), aynı modelin başka rengine orta (0.5-0.7), yalnızca benzer tarza düşük (0.3 altı) puan ver. Emin değilsen yüksek puan verme.'; // tek seferde görsel olarak karşılaştırılacak en fazla ürün
 
 // Müşteri görseli ile aday ürün görsellerini tek çağrıda karşılaştırır; her adaya 0-1 benzerlik puanı verir (yüksekten düşüğe)
-async function rankByVision(session, cands, instruction) {
-  const withImg = cands.filter((c) => c.images.length).slice(0, MAX_CANDS);
+async function rankByVision(session, cands, instruction, opts = {}) {
+  const { model = cfg.visionModel, perCand = 1, max = MAX_CANDS, maxSide = 384, tag = 'gorsel_eslestirme' } = opts;
+  const withImg = cands.filter((c) => c.images.length).slice(0, max);
   if (!withImg.length) return [];
   try {
     // Aday görselleri kendimiz indirip küçültürüz; hafızadan (önbellekten) gelir, bu yüzden hızlıdır
     const loaded = await Promise.all(
       withImg.map(async (c) => {
         try {
-          return { c, img: await getImage(c.images[0], { maxSide: 384 }) };
+          const imgs = await Promise.all(c.images.slice(0, perCand).map((u) => getImage(u, { maxSide }).catch(() => null)));
+          const good = imgs.filter(Boolean);
+          if (!good.length) throw new Error('görsel yok');
+          return { c, imgs: good };
         } catch (e) {
           console.error('[rankByVision] aday görseli alınamadı:', c.id, e.message);
           return null;
@@ -387,15 +397,15 @@ async function rankByVision(session, cands, instruction) {
     const ok = loaded.filter(Boolean);
     if (!ok.length) return null;
     const content = [{ type: 'text', text: 'MÜŞTERİNİN GÖRSELİ:' }, imgBlock(session), { type: 'text', text: 'ADAY ÜRÜNLER:' }];
-    for (const { c, img } of ok) {
+    for (const { c, imgs } of ok) {
       content.push({ type: 'text', text: `Aday id=${c.id} | ${c.title} | model: ${c.modelName || '-'} | renk: ${c.color || '-'}` });
-      content.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.b64 } });
+      for (const img of imgs) content.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.b64 } });
     }
     content.push({
       type: 'text',
       text: `${instruction} HER adayı puanla (hiçbiri benzemiyorsa düşük puan ver). Yalnızca JSON: {"eslesmeler":[{"id":"","guven":0.0-1.0,"neden":"kısa"}]}`,
     });
-    const r = await create({ model: cfg.visionModel, max_tokens: 700, messages: [{ role: 'user', content }] }, 'gorsel_eslestirme');
+    const r = await create({ model, max_tokens: 700, messages: [{ role: 'user', content }] }, tag);
     const j = extractJson(textOf(r));
     return (j?.eslesmeler || [])
       .map((m) => ({ p: catalog.getProduct(m.id), guven: Number(m.guven) || 0, neden: m.neden }))
@@ -422,14 +432,36 @@ async function identifyImage(session, hint) {
     } catch (e) {
       console.error('[identify] görsel tanımlanamadı:', e.message);
     }
-    cands = catalog.shortlistByVisual(desc, hint, MAX_CANDS);
+    cands = catalog.shortlistByVisual(desc, hint, MAX_CANDS * 2);
   }
-  let ranked = await rankByVision(
-    session,
-    cands,
-    'Müşterinin görselindeki ürünle AYNI modeli arıyoruz: birebir aynı ürüne yüksek, aynı modelin başka rengine orta, yalnızca benzer tarza düşük puan ver.'
-  );
-  if (ranked === null) ranked = cands.slice(0, 6).map((p) => ({ p, guven: 0.3, neden: 'görsel karşılaştırma yapılamadı' }));
+  // 1. aşama: hızlı model, adayları 10'arlı gruplar halinde puanlar (20 aday)
+  const groups = [];
+  for (let i = 0; i < cands.length; i += MAX_CANDS) groups.push(cands.slice(i, i + MAX_CANDS));
+  const parts = await Promise.all(groups.map((g) => rankByVision(session, g, MATCH_RULE, { perCand: 2 })));
+  let ranked;
+  if (parts.every((x) => x === null)) ranked = cands.slice(0, 6).map((p) => ({ p, guven: 0.3, neden: 'görsel karşılaştırma yapılamadı' }));
+  else ranked = parts.filter(Boolean).flat().sort((a, b) => b.guven - a.guven);
+
+  // 2. aşama: emin değilsek (güven düşük ya da en iyi iki FARKLI model yakın) güçlü model en iyi adayları 2'şer görselle yeniden değerlendirir
+  const top = ranked[0];
+  const second = ranked.find((r) => top && r.p.modelKey !== top.p.modelKey);
+  const unsure = !top || top.guven < 0.85 || (second && top.guven - second.guven < 0.2);
+  if (cfg.visionStrongModel && unsure && ranked.length && ranked[0].neden !== 'görsel karşılaştırma yapılamadı') {
+    const pick = [];
+    const seen = new Set();
+    for (const r of ranked) {
+      if (r.guven < 0.2) break;
+      if (!seen.has(r.p.id)) { seen.add(r.p.id); pick.push(r.p); }
+      if (pick.length >= 6) break;
+    }
+    if (pick.length) {
+      const strong = await rankByVision(session, pick, MATCH_RULE, { model: cfg.visionStrongModel, perCand: 3, max: 6, maxSide: 448, tag: 'gorsel_dogrulama' });
+      if (strong?.length) {
+        const ids = new Set(strong.map((x) => x.p.id));
+        ranked = [...strong, ...ranked.filter((r) => !ids.has(r.p.id)).map((r) => ({ ...r, guven: Math.min(r.guven, 0.4) }))];
+      }
+    }
+  }
   return { desc, ranked };
 }
 
@@ -439,6 +471,8 @@ function startIdentify(session, hint) {
   session.identify = (async () => {
     const own = await detectOwnPhoto(session).catch(() => null);
     if (own) return { desc: null, ranked: [{ p: own, guven: 1 }], own: true };
+    const cat = await detectCatalogPhoto(session).catch(() => null);
+    if (cat) return { desc: null, ranked: [{ p: cat, guven: 0.97 }], catalogHit: true };
     const h = session.lastImage ? await dhash(Buffer.from(session.lastImage.b64, 'base64')) : null;
     if (h !== null) {
       const hit = identifyCache.find((e) => Date.now() - e.at < 24 * 3600 * 1000 && hamming(e.h, h) <= 5);
@@ -530,15 +564,23 @@ async function matchImage(session, size, hint, send) {
     return out;
   }
 
-  // katalogda birebir eşleşme yok -> görsele en çok benzeyen, istenen numarası stokta olan modeller
+  // Kesin eşleşme yok: "bizde yok" ASLA denmez. Görsele en çok benzeyen (farklı modellerden) en iyi adaylar fotoğrafıyla gösterilir, müşteri seçer.
+  const cand = uniqueByModel(ranked.filter((r) => r.guven >= 0.25 && r.p.inStock).map((r) => r.p)).slice(0, 4);
+  if (cand.length) {
+    out.durum = 'belirsiz_adaylar';
+    out.adaylar = cand.map((c) => catalog.brief(c, size));
+    Object.assign(out, photoNote(await sendPhotos(session, send, cand.map((c) => c.id))));
+    out.not = 'Fotoğraftaki ürünü KESİN eşleştiremedik. ASLA "bizde yok / bulunmuyor / katalogda yok" DEME (ürün bizde olabilir). Kısaca "Tam netleştirmek için en çok benzeyen modellerimizi gönderdim, aradığınız bunlardan biri mi? Modelin adını da yazabilirsiniz" de. Fotoğrafları müşteriye ZATEN gönderildi (tekrar gönderme).';
+    return out;
+  }
   out.durum = 'katalogda_yok';
   let sim = similarFromRanking(null);
   if (sim.length < 3) sim = await similarByVision(session, null, size, desc?.text || '');
   out.benzer_urunler = sim.slice(0, 5).map((c) => catalog.brief(c, size));
   if (sim.length) Object.assign(out, photoNote(await sendPhotos(session, send, sim.slice(0, 5).map((c) => c.id))));
   out.not = sim.length
-    ? 'Müşterinin gönderdiği ürünle birebir eşleşen model bulunamadı. Bunu nazikçe söyle; görsele en çok benzeyen modellerin fotoğrafları müşteriye ZATEN gönderildi (tekrar gönderme). Hangisini beğendiğini sor.'
-    : 'Sitede müşterinin ürününe benzer stoklu model bulunamadı. Dürüstçe söyle ve müşterinin tarzını/numarasını sorarak search_products ile alternatif ara.';
+    ? 'Fotoğraftaki ürünü tam eşleştiremedik. "Bizde yok" DEME; "Tam eşleştiremedim, en çok benzeyen modellerimiz şunlar, aradığınız bunlardan biri mi? Modelin adını yazabilirsiniz" de. Fotoğrafları müşteriye ZATEN gönderildi (tekrar gönderme).'
+    : 'Fotoğraftaki ürünü eşleştiremedik. "Bizde yok" DEME; modelin adını veya gönderi/ürün bağlantısını yazmasını kibarca iste, tarzını/numarasını sorarak search_products ile ara.';
   return out;
 }
 
@@ -606,7 +648,7 @@ async function submitOrder(session, userId, a) {
     return {
       ok: false,
       hatalar: ['UPSELL_YAPILMADI'],
-      not: 'Sipariş henüz tamamlanamaz: önce offer_campaign çağır, 2. ürüne 300 TL / 4 ürüne toplam 600 TL indirim kampanyasını kısaca sunup "Bir ürün daha eklemek ister misiniz?" diye sor ve müşterinin cevabını bekle. Bu mesajda sipariş özeti yazma, siparişi tamamlama.',
+      not: 'Sipariş henüz tamamlanamaz: önce offer_campaign çağır, her 2 ürüne 300 TL indirim kampanyasını kısaca sunup "Bir ürün daha eklemek ister misiniz?" diye sor ve müşterinin cevabını bekle. Bu mesajda sipariş özeti yazma, siparişi tamamlama.',
     };
   }
   const errors = [];
@@ -681,6 +723,44 @@ async function productHash(url) {
   if (productHashes.size > 2000) productHashes.clear();
   productHashes.set(url, h);
   return h;
+}
+
+// Müşterinin gönderdiği görsel, sitemizdeki herhangi bir ürün fotoğrafının (galerideki ilk 4 görsel) aynısı/ekran görüntüsü mü?
+// Model çağırmadan, ücretsiz ve çok güvenilir: bizim paylaşımımızı/hikayemizi/ürün fotoğrafımızı iletenler hemen tanınır.
+let hashWarm = null;
+export function warmProductHashes() {
+  if (hashWarm) return hashWarm;
+  hashWarm = (async () => {
+    const urls = [...new Set(catalog.allProducts().flatMap((p) => (p.images || []).slice(0, 4)))].filter((u) => !productHashes.has(u));
+    let i = 0;
+    const worker = async () => {
+      while (i < urls.length) {
+        const u = urls[i++];
+        try { await productHash(u); } catch { /* indirilemedi */ }
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+  })().finally(() => { setTimeout(() => { hashWarm = null; }, 10 * 60 * 1000).unref?.(); });
+  return hashWarm;
+}
+
+export async function detectCatalogPhoto(session) {
+  if (!session.lastImage) return null;
+  const h = await dhash(Buffer.from(session.lastImage.b64, 'base64'));
+  if (h === null) return null;
+  await Promise.race([warmProductHashes(), new Promise((r) => setTimeout(r, 8000))]);
+  const scored = [];
+  for (const p of catalog.allProducts()) {
+    for (const u of (p.images || []).slice(0, 4)) {
+      const ph = productHashes.get(u);
+      if (ph !== null && ph !== undefined) scored.push({ p, d: hamming(h, ph) });
+    }
+  }
+  scored.sort((a, b) => a.d - b.d);
+  if (!scored.length || scored[0].d > 6) return null;
+  const other = scored.find((x) => x.p.id !== scored[0].p.id);
+  if (other && other.d - scored[0].d < 3) return null; // iki farklı ürün birbirine çok yakın: görsel modele bırak
+  return scored[0].p;
 }
 
 // Müşterinin gönderdiği görsel, bizim az önce gösterdiğimiz ürün fotoğraflarından biri mi? (tek ve net eşleşme gerekir)
@@ -795,7 +875,7 @@ async function runTool(name, input, ctx) {
       return findAlternatives(session, send, input.product_id, input.size);
     case 'offer_campaign': {
       session.upsellTurn = session.turn; // sipariş ancak müşteri bu tekliften sonra bir mesaj yazarsa tamamlanır
-      return { ok: true, not: 'Fotoğraf GÖNDERME. Kısaca kampanyayı sun: 2. ürüne 300 TL indirim (aynı siparişte 4 ürüne toplam 600 TL) ve "Bir ürün daha eklemek ister misiniz?" diye sor. Cevabı bekle.' };
+      return { ok: true, not: 'Fotoğraf GÖNDERME. Kısaca kampanyayı sun: her 2 ürüne 300 TL indirim (2li alımda 300, 4lü alımda 600, 6lı alımda 900 TL; aynı siparişte) ve "Bir ürün daha eklemek ister misiniz?" diye sor. Cevabı bekle.' };
     }
     case 'suggest_upsell': {
       session.upsellTurn = session.turn; // sipariş ancak müşteri bu tekliften sonra bir mesaj yazarsa tamamlanır
@@ -913,8 +993,13 @@ async function runTool(name, input, ctx) {
 
 // ---------- cevap denetimi: kuralları çiğneyen iddiaları (ör. yanlış ücretsiz kargo baremi) yakalar ----------
 const numTL = (t) => Number(String(t).replace(/[.\s]/g, '').replace(',', '.'));
+const NEG = /değil|değildir|olmaz|açtırmaz|açılmaz|yapamaz|mümkün değil|edemez|izin verilmez|veremez|yok\b|hayır|açmadan|bakamazsınız|denetmez|deneyemezsiniz/i;
 export function auditReply(text) {
   const problems = [];
+  for (const sentence of String(text).split(/(?<=[.!?\n])\s+/)) {
+    if (/(ödeme(yi)?|parayı)\s+(yapmadan|vermeden)[^.!?\n]{0,60}(açıp|açabilir|açtır|bakabil|denet|deneyebil|bakman|bakın)/i.test(sentence) && !NEG.test(sentence)) problems.push('Şeffaf kargoda müşteri ödeme yapmadan paketi açıp bakamaz/deneyemez; kargocu ödeme ve teslimattan önce paketi asla açtırmaz. Paket şeffaf olduğu için ürün dışarıdan görülür.');
+    if (/bazı kargocular|kargocular (öyle|açtır)/i.test(sentence)) problems.push('Kargocunun paketi açtırabileceğini söyleme; şeffaf kargoda ödeme ve teslimattan önce paket açtırılmaz.');
+  }
   const re = /(\d[\d.,]*)\s*(?:TL|₺|lira)?['’]?\s*(?:nin|nın|nun|nün|in|ın|un|ün)?\s*(?:ve\s+)?(?:üzeri|üstü|üzerinde|üstünde|ve yukarı|ve üstü)/gi;
   for (const sentence of String(text).split(/(?<=[.!?\n])\s+/)) {
     if (!/kargo/i.test(sentence) || !/ücretsiz|bedava/i.test(sentence)) continue;
@@ -978,6 +1063,20 @@ async function agentLoop({ session, userId, send, tools }) {
 
     if (resp.stop_reason !== 'tool_use') {
       let out = textOf(resp);
+      if (!out.trim()) {
+        if (!session.emptyRetry) {
+          session.emptyRetry = true;
+          console.warn('[agent] boş cevap, tekrar isteniyor');
+          session.messages[session.messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: '...' }] };
+          session.messages.push({ role: 'user', content: '[SİSTEM NOTU: Cevabın boş kaldı. Müşterinin son mesajını cevapla: gerekiyorsa araçları kullan, sonra kısa ve nazik bir mesaj yaz.]' });
+          continue;
+        }
+        session.emptyRetry = false;
+        out = 'Merhaba efendim 😊 Hangi model ve numarayla ilgileniyorsunuz? Hemen yardımcı olayım.';
+        session.messages[session.messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: out }] };
+        return out;
+      }
+      session.emptyRetry = false;
       if (resp.stop_reason === 'max_tokens') out = trimToSentence(out); // çok uzun cevabı son tam cümlede kes
       if (!photoSent && !nudged && send && NO_SIZE.test(out) && !catalog.isEmpty()) {
         nudged = true;
@@ -992,6 +1091,9 @@ async function agentLoop({ session, userId, send, tools }) {
         if (fixed && !auditReply(fixed).length) {
           out = fixed;
           session.messages[session.messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: fixed }] };
+        } else if (problems.some((p) => /Şeffaf|kargocu/.test(p))) {
+          out = 'Efendim kargocu, ödemeyi yapıp paketi teslim almadan paketi açtırmaz 😊 Ancak paketimiz şeffaf olduğu için ürünü kutusuyla dışarıdan net şekilde görürsünüz. Teslim aldıktan sonra uymazsa çok hızlı değişim yapıyoruz.';
+          session.messages[session.messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: out }] };
         } else {
           out = `Ücretsiz kargo baremimiz ${cfg.freeShippingMin.toLocaleString('tr-TR')} TL'dir efendim; bunun altındaki siparişlerde ${cfg.shippingFee} TL kargo ücreti yansıtılıyor 😊`;
           session.messages[session.messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: out }] };
@@ -1031,6 +1133,9 @@ export async function handleDirectMessage({ userId, text, imageUrl, imageData, n
 
   // Müşteri bir mesajımıza "yanıtla" yaptıysa: hangi ürün/mesaj olduğunu bota söyle
   const sys = [...notes];
+  if (/(ödeme(yi)?\s*(yapmadan|etmeden)|ödemeden|parayı vermeden|param?ı? vermeden|önce açıp|açıp bak|açtır|deneyebilir|denemek|giyip|giyebilir)/i.test(text || '') && /(paket|kargo|ürün|ayakkab|kutu)/i.test(text || '')) {
+    sys.push('ŞEFFAF KARGO HATIRLATMASI: Müşteri paketi ödemeden açma/deneme konusunu soruyor. DOĞRUSU: Hayır, kargocu ödeme ve teslimattan önce paketi asla açtırmaz/denettirmez. Paket şeffaf olduğu için müşteri ürünü kutusuyla dışarıdan net görür, sonra kargocuya ödeyip teslim alır. Teslim aldıktan sonra uymazsa çok hızlı değişim yapılır. "Haklısınız" veya "açıp bakabilirsiniz" DEME; kısa, kibar ve ikna edici cevapla.');
+  }
   if (replyTo) {
     const p = replyTo.productId ? catalog.getProduct(replyTo.productId) : null;
     if (p) {
@@ -1103,7 +1208,7 @@ async function identifyPostProducts(mediaId, imageUrl, caption) {
   return items;
 }
 
-const PRICE_Q = /fiyat|kaç\s*(tl|lira|para)|kaça|ne\s*kadar|ücret|kac\s*tl|kaç\s*₺|\bkaç\b|\bfyt\b|\bfiyatı\b/i;
+const PRICE_Q = /fiyat|fıyat|fyat|fiat|fiyad|fıat|kaç\s*(tl|lira|para|₺)|kaça|ne\s*kadar|ücret|ucret|kac\s*(tl|para)|\bkaç\b|\bkac\b|\bfyt\b|\bfiyatı\b/i;
 const fmtTl = (n) => Number(n).toLocaleString('tr-TR');
 // Fiyat sorulduysa ve cevapta ürün fiyatı yoksa, doğru fiyatlı şablonla değiştirir
 export function enforceCommentPrice(reply, commentText, items) {
@@ -1132,7 +1237,7 @@ export async function handleComment({ userId, username, commentText, mediaCaptio
 ${mediaCaption ? `Yorum yapılan gönderinin açıklaması: "${mediaCaption.slice(0, 500)}" (hangi ürün/model olduğunu buradan ve search_products ile anlayabilirsin)\n` : ''}${postItems.length ? `Gönderideki ürün(ler) (görselden katalogla eşleşti, güncel fiyatlarıyla): ${JSON.stringify(postItems)}\n` : ''}
 Görevin: yorum için iki çıktı üret. Yalnızca JSON döndür:
 {"public_reply":"...", "dm":"..."}
-- public_reply: herkese açık, 1-3 kısa cümle, sıcak ve satışa yönlendiren. Yorumdaki soruyu kısaca cevapla. FİYAT SORULURSA: sorulan modelin NET fiyatını yaz (ör. "Tazz Bej 1.199 TL 🎉"). Modeli yukarıdaki gönderi ürünlerinden, yorumdan veya search_products sonucundan belirle; fiyatı yalnızca araç/ürün bilgisindeki fiyat_tl'den al. ASLA fiyat aralığı ("X ile Y TL arası") veya genel ürün fiyatları verme. Gönderide birden çok ürün varsa her birinin adı ve net fiyatını yaz. Modeli gerçekten belirleyemezsen aralık verme: "Hangi model için fiyat öğrenmek istediğinizi DM'den iletirseniz hemen net fiyat verelim" de. Stok/numara gibi kesin bilgiyi önce araçla doğrula. Mutlaka şunu ekle: daha detaylı destek ve sipariş için bize DM atmalarını rica et (örn. "Detaylı bilgi ve sipariş için bize DM'den yazabilirsiniz 📩"). Başlangıç/bitişte ❤️ gibi bir emoji kullan.
+- public_reply: herkese açık, 1-3 kısa cümle, sıcak ve satışa yönlendiren. Yorumdaki soruyu kısaca cevapla. Yazım hatalarını (fiat/fyat/fıyat = fiyat vb.) sessizce anla; yazım hakkında asla yorum yapma, espri yapma, doğrudan ve kibarca cevap ver. FİYAT SORULURSA: sorulan modelin NET fiyatını yaz (ör. "Tazz Bej 1.199 TL 🎉"). Modeli yukarıdaki gönderi ürünlerinden, yorumdan veya search_products sonucundan belirle; fiyatı yalnızca araç/ürün bilgisindeki fiyat_tl'den al. ASLA fiyat aralığı ("X ile Y TL arası") veya genel ürün fiyatları verme. Gönderide birden çok ürün varsa her birinin adı ve net fiyatını yaz. Modeli gerçekten belirleyemezsen aralık verme: "Hangi model için fiyat öğrenmek istediğinizi DM'den iletirseniz hemen net fiyat verelim" de. Stok/numara gibi kesin bilgiyi önce araçla doğrula. Mutlaka şunu ekle: daha detaylı destek ve sipariş için bize DM atmalarını rica et (örn. "Detaylı bilgi ve sipariş için bize DM'den yazabilirsiniz 📩"). Başlangıç/bitişte ❤️ gibi bir emoji kullan.
 - dm: yoruma özel mesaj (yoruma cevap + araçla doğrulanmış ürün/fiyat bilgisi + numara/beden sorusuyla bitir). 600 karakteri geçmesin, görsel gönderemezsin.
 - Yorum sadece emoji/övgü/etiketleme ise: public_reply kısa içten teşekkür (+ DM daveti), dm boş string "" olsun.
 - Yorum küfür/spam/reklam ise ikisini de boş string yap.`;
