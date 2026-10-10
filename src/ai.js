@@ -1254,7 +1254,8 @@ Görevin: yorum için iki çıktı üret. Yalnızca JSON döndür:
   // Sohbet geçmişini temizle; yorum ve verdiğimiz cevaplar hafızaya (özet olarak) yazılır ki DM'de doğal devam edilsin
   session.messages.length = startLen;
   const publicReply = (j.public_reply || '').trim();
-  const dm = (j.dm || '').trim();
+  // COMMENT_DM=true değilse yorumcuya DM gönderilmez; hafızaya da "DM yazdık" diye işlenmez
+  const dm = cfg.commentDm ? (j.dm || '').trim() : '';
   if (publicReply || dm) {
     customers.addComment(userId, { text: commentText, publicReply, dm });
     const last = session.messages[session.messages.length - 1];

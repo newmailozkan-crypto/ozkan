@@ -46,6 +46,8 @@ export const cfg = {
   // Kampanya: her 2 ürün için toplam 300 TL indirim (2'li 300, 4'lü 600, 6'lı 900 ...). Yalnızca TEK siparişte geçerli.
   campaignStepQty: Number(env.CAMPAIGN_STEP_QTY || 2),
   campaignStepDiscount: Number(env.CAMPAIGN_STEP_DISCOUNT || 300),
+  // Yorum yapana otomatik özel mesaj (DM) gönderilsin mi? Varsayılan KAPALI (spam algısını önlemek için). Açmak için COMMENT_DM=true
+  commentDm: String(env.COMMENT_DM || '').toLowerCase() === 'true',
   // Sepet (indirim sonrası) bu tutarın altındaysa sabit kargo ücreti eklenir
   freeShippingMin: Number(env.FREE_SHIPPING_MIN || 2500),
   shippingFee: Number(env.SHIPPING_FEE || 100),
