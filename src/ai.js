@@ -3,7 +3,7 @@ import { cfg } from './config.js';
 import * as catalog from './catalog.js';
 import { siteInfoText } from './siteInfo.js';
 import { storeRulesText, priceCart } from './storeRules.js';
-import { sendTelegram, sendTelegramPhoto, formatOrder, formatCancel } from './telegram.js';
+import { sendTelegram, sendTelegramPhoto, formatOrder, formatCancel, notifyHuman } from './telegram.js';
 import * as customers from './customers.js';
 import { create } from './claude.js';
 import { buildAddress } from './address.js';
@@ -339,6 +339,18 @@ const TOOLS = [
     name: 'cancel_order',
     description: 'Müşteri siparişini iptal etmek istediğini açıkça söylediğinde çağır. Sipariş süresi içindeyse (varsayılan 3 saat) iptal eder ve Telegram grubuna bildirir; süre geçmişse iptal etmez.',
     input_schema: { type: 'object', properties: { order_id: { type: 'string', description: 'Sipariş no (bilinmiyorsa boş: son sipariş)' } } },
+  },
+  {
+    name: 'notify_human',
+    description: "Müşteriyi canlı müşteri temsilcisine (WhatsApp) yönlendirmen gereken her durumda (kargo takibi, sipariş durumu, değişim/iade, şikayet, EFT/havale, sipariş değişikliği, cevabını bilmediğin soru) önce bunu çağır: ekibe Telegram grubundan 'insan desteği gerekiyor' bildirimi gider. Sonra müşteriyi WhatsApp hattına yönlendir.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        reason: { type: 'string', description: 'Kısa sebep (örn. kargo takibi, değişim talebi, şikayet)' },
+        last_message: { type: 'string', description: 'Müşterinin son mesajı (kısa)' },
+      },
+      required: ['reason'],
+    },
   },
   {
     name: 'send_satisfaction_photo',
@@ -944,6 +956,19 @@ async function runTool(name, input, ctx) {
     }
     case 'submit_order':
       return submitOrder(session, userId, input);
+    case 'notify_human': {
+      // Aynı müşteri için 30 dakikada en fazla bir bildirim (ekibi spam'lememek için)
+      if (session.humanNotifiedAt && Date.now() - session.humanNotifiedAt < 30 * 60 * 1000) {
+        return { ok: true, not: 'Ekibe zaten bildirildi. Müşteriyi WhatsApp hattına yönlendirmeye devam et.' };
+      }
+      session.humanNotifiedAt = Date.now();
+      try {
+        await notifyHuman(String(input.reason || 'belirtilmedi').slice(0, 200), userId, session.username, String(input.last_message || '').slice(0, 300));
+      } catch (e) {
+        console.error('[telegram] insan desteği bildirimi gönderilemedi:', e.message);
+      }
+      return { ok: true, not: 'Ekibe bildirildi. Şimdi müşteriyi WhatsApp hattına yönlendir.' };
+    }
     case 'cancel_order': {
       const r = customers.cancelOrder(userId, input.order_id);
       if (r.durum === 'iptal_edildi') {

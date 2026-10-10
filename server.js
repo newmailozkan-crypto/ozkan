@@ -116,6 +116,7 @@ function enqueue(userId, task) {
   queues.set(userId, next);
 }
 
+let lastBotErrorAlert = 0;
 const FALLBACK = `Şu an yoğunluk yaşıyoruz 🙏 Canlı müşteri temsilcimiz size hemen yardımcı olacaktır: ${cfg.whatsappUrl}`;
 
 // Gönderdiğimiz mesajlar (kimlik -> içerik/ürün): müşteri bir mesajımıza "yanıtla" yapınca hangi ürün olduğunu bilmek için
@@ -269,6 +270,15 @@ async function processBatch(senderId, items) {
       await ig.sendText(senderId, FALLBACK);
     } catch {
       /* gönderilemedi */
+    }
+    // Bot cevap veremediyse ekibe haber ver (10 dakikada en fazla bir kez, kesinti anında grubu doldurmamak için)
+    if (Date.now() - lastBotErrorAlert > 10 * 60 * 1000) {
+      lastBotErrorAlert = Date.now();
+      try {
+        await sendTelegram(`⚠️ İNSAN DESTEĞİ GEREKİYOR: bot bir müşteriye cevap veremedi (@${senderId}).\nMüşteriye WhatsApp hattı gönderildi. Hata: ${String(e.message).slice(0, 200)}\nRender Logs'ta "[dm] hata" satırına bakın.`);
+      } catch {
+        /* yoksay */
+      }
     }
   }
 }
