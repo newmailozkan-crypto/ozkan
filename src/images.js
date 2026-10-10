@@ -31,11 +31,11 @@ function guessType(url) {
 }
 
 // Görseli indirir; sharp varsa en uzun kenarı maxSide'a küçültüp JPEG yapar. Claude'a base64 olarak verilir.
-export async function getImage(url, { maxSide = 768, useCache = true } = {}) {
+export async function getImage(url, { maxSide = 768, useCache = true, userAgent = 'ig-satis-botu/1.0' } = {}) {
   const key = `${maxSide}|${url}`;
   if (useCache && cache.has(key)) return cache.get(key);
 
-  const res = await fetch(url, { headers: { 'User-Agent': 'ig-satis-botu/1.0' } });
+  const res = await fetch(url, { headers: { 'User-Agent': userAgent } });
   if (!res.ok) throw new Error(`Görsel indirilemedi (${res.status}): ${url}`);
   let buf = Buffer.from(await res.arrayBuffer());
   let mediaType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
@@ -59,6 +59,26 @@ export async function getImage(url, { maxSide = 768, useCache = true } = {}) {
   const out = { buf, mediaType, b64: buf.toString('base64') };
   if (useCache) remember(key, out);
   return out;
+}
+
+// Müşterinin Instagram'dan gönderdiği görsel: Instagram CDN bazen tek denemede veya tanınmayan User-Agent ile reddeder.
+// 3 deneme, her seferinde farklı User-Agent ve kısa bekleme (görsel "açılamadı" hatasını azaltır).
+const CUSTOMER_UAS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+  'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+  'ig-satis-botu/1.0',
+];
+export async function getCustomerImage(url) {
+  let lastErr;
+  for (let i = 0; i < CUSTOMER_UAS.length; i++) {
+    try {
+      return await getImage(url, { maxSide: 768, useCache: false, userAgent: CUSTOMER_UAS[i] });
+    } catch (e) {
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+    }
+  }
+  throw lastErr;
 }
 
 // ---- Instagram'a gönderilecek görsel adresi ----

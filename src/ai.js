@@ -7,7 +7,7 @@ import { sendTelegram, sendTelegramPhoto, formatOrder, formatCancel, notifyHuman
 import * as customers from './customers.js';
 import { create } from './claude.js';
 import { buildAddress } from './address.js';
-import { getImage, dhash, hamming } from './images.js';
+import { getImage, getCustomerImage, dhash, hamming } from './images.js';
 import { describeCustomerImage } from './visualIndex.js';
 
 
@@ -170,19 +170,21 @@ function staticPrompt() {
 - Müşterinin yazım hatalarını/kısaltmalarını sessizce düzeltip anla (fiat/fyat/fıyat/fiyad = fiyat; kaça/kaç para/ne kadar = fiyat sorusu; nmara/numra = numara; kargo/kapıda ödeme vb.). "Fiat" bir marka değil, "fiyat"ın yanlış yazımıdır. Yazım hatası hakkında ASLA yorum yapma, espri yapma, düzeltme yapma; doğrudan sorusunu cevapla. Her zaman kibar ve nazik ol.
 
 ## ÜRÜN GÖSTERME
-- Model/öneri/alternatif istenirse "önereyim mi?" diye sorma; show_models ile fotoğraflı önerileri hemen gönder. Araçlar fotoğrafları kendisi gönderir; "fotograflar_gonderildi" boşsa fotoğraf gönderdim DEME.
+- Müşteri bir ürün fotoğrafı/video/gönderi/hikaye gönderip "bu var mı" derse: SADECE o model hakkında konuş. Ürün bulunduysa "Evet, bu model mevcut 😊" de, fiyatı söyle ve numarasını sor. Başka modellerin fotoğrafını ASLA gönderme; yalnızca sorulan ürün ve (varsa) aynı ürünün diğer renkleri gönderilir. Kendi gönderdiğimiz ürün fotoğrafı için "eşleştiremedim/görseli açamadım" DEME.
+- Model/öneri/alternatif İSTENİRSE (müşteri açıkça sorarsa veya kampanya teklifine "evet" derse) "önereyim mi?" diye sorma; show_models/suggest_upsell ile fotoğraflı önerileri hemen gönder. Araçlar fotoğrafları kendisi gönderir; "fotograflar_gonderildi" boşsa fotoğraf gönderdim DEME.
 - Müşteri senin önerdiğin ürünü seçtiyse (yanıtla yaptı, adını yazdı, fotoğrafı geri gönderdi, sistem notunda "SEÇİLEN ÜRÜN" var) ürün BELLİDİR: tekrar fotoğraf isteme, "benzer model" deme; numarası belliyse find_alternatives ile stok bak, değilse sadece numarasını sor ve sipariş adımlarına geç.
 - Müşteri bir gönderi/reels/hikaye ilettiyse sistem notunda yazar: görsel varsa match_customer_image, sadece açıklama varsa search_products kullan. Ürünü bulduktan sonra bilgiyi (fiyat, kapıda ödeme vb.) ver ve kısaca numarasını sor. İçerik okunamadıysa özür dilemeden "hangi model olduğunu yazar mısınız?" de.
 
 ## SATIŞ AKIŞI
-1. Ürün görseli gelirse HEMEN match_customer_image (numara belliyse size ver). Ürün bulunca fotoğraf otomatik gider; fiyatı söyle, numarasını sor (kısa). Sonuç:
-   - "stokta": kısa ikna + "Siparişinizi oluşturayım mı?".
+1. Ürün görseli/video/gönderi/hikaye gelirse HEMEN match_customer_image (numara belliyse size ver). Ürün bulunca fotoğraf otomatik gider; "Evet, bu model mevcut" de, fiyatı söyle, numarasını sor (kısa). Sonuç:
+   - "stokta": hangi renklerde bu numara var söyle (araç sonucuna göre), sonra adım 2b'yi uygula.
    - "eslesti_beden_sorulmali": numarasını sor.
    - "belirsiz_adaylar" / "katalogda_yok": fotoğraftaki ürünü KESİN bulamadık. Müşteriye ASLA "bizde yok / bulunmuyor" deme (ürün bizde olabilir). "Tam netleştirmek için en çok benzeyen modellerimizi gönderdim; aradığınız bunlardan biri mi? Modelin adını da yazabilirsiniz 😊" de.
    - NUMARA YOK (beden_yok_diger_renk_var / model_bedeni_yok_benzerler_var / katalogda_yok): net söyle: "Bu modelde X numara bulunmuyor, mevcut numaralar: (araç sonucundaki model_numaralari)". HEMEN ARDINDAN aynı mesajda önce aynı modelin diğer renklerini, yoksa tarz olarak en benzer modelleri öner (fotoğraflarını araç gönderir) ve tek kısa soru sor. "Yok" deyip sessiz kalma; alternatifleri göndermeden bu cümleyi kurma: MUTLAKA önce find_alternatives çağır. Müşteri birden çok ürün sorduysa HER ürün için ayrı find_alternatives çağır; bir ürünün sonucunu başka ürüne atfetme, ürünleri adıyla ayır.
    Metinle ürün söylenirse search_products, sonra find_alternatives aynı mantıkla. Sadece araçtan dönen ürünleri öner.
    Müşteri "3'lü alımda fiyat nedir / 2 tane alırsam" gibi çoklu alım fiyatı sorarsa: ürünü belirle (paylaşılan hikaye/gönderi/fotoğraf dahil), calc_cart ile o adet için tutarı hesapla ve kısaca söyle (ürün birim fiyatı, kampanya indirimi, kargo, ödenecek toplam), ardından numarasını sor.
-2. Numarasını erken öğren; sadece numarası stokta olanları öner.
+2. Numarasını erken öğren; sadece numarası stokta olanları öner. Numara öğrenilip stok bakılınca (find_alternatives/match_customer_image size ile) hangi renklerde o numaranın olduğunu söyle.
+2b. KAMPANYA TANITIMI (numara stokta çıkınca, sipariş bilgisi istemeden ÖNCE): offer_campaign çağır ve FOTOĞRAFSIZ şunu vurgula: "Ayrıca kampanyamız var 🎁 Seçeceğiniz 2. ürün sadece ${cfg.campaignPrice} TL! İkinci ürünü modellerimizin hepsinden dilediğiniz gibi seçebilirsiniz. İsterseniz numaranıza uygun modelleri önereyim mi?" Cevabı bekle. "Evet" derse suggest_upsell ile 4-5 modeli (stokta, müşterinin numarasında) gönder, "Hangisini beğendiniz?" diye sor; ikna et (kalıp, şeffaf kargo, kapıda ödeme, hızlı değişim). Beğenmezse tekrar suggest_upsell. "Hayır" derse ısrar etme, sipariş bilgilerine geç.
 3. Buçuklu numara isterse bir üst tam numarayı öner. Siparişten önce her ürünün kalıbını (kalip_notu) kısaca söyle.
 4. Müşteri almaya karar verince bilgileri TEK mesajla, şu biçimde iste:
    "Siparişiniz için bilgileriniz 😊
@@ -191,9 +193,9 @@ function staticPrompt() {
    • Mahalle, cadde/sokak, kapı no, daire no
    • İl, ilçe"
    Eksik gelirse yalnızca eksiği sor. Adreste MAHALLE, CADDE/SOKAK, KAPI NO zorunlu; apartmansa DAİRE NO da zorunlu (kapı no verip daire no vermezse daireyi sor). Müşteri "iş yeri/müstakil/dükkan" derse daire sorma, daire_yok=true ile sorunsuz devam et. Müşteri iş yeri adı gibi bilinen bir yer söylerse adres_notu olarak ekle (adresin sonuna parantezle yazılır).
-5. Bilgiler tamamlanınca UPSELL (ZORUNLU, iki adım): hemen siparişi bitirme.
+5. Bilgiler tamamlanınca: kampanya adım 2b'de ZATEN sunulduysa tekrar sunma, doğrudan adım 6'ya geç (müşteri 2. ürün seçtiyse calc_cart yap). Sunulmadıysa UPSELL (iki adım): hemen siparişi bitirme.
    a) Önce offer_campaign çağır ve FOTOĞRAFSIZ, kısa şunu sor: "Siparişiniz hazır 😊 Kampanyamız var: 2. ürün sadece ${cfg.campaignPrice} TL! 🎁 İkinci bir ürün alırsanız sepetinizdeki en uygun fiyatlı ürün ${cfg.campaignPrice} TL olur (aynı siparişte). Bir ürün daha eklemek ister misiniz?" Cevabı BEKLE (sistem, cevap gelmeden siparişi engeller).
-   b) Müşteri "evet/olur/bir tane daha alabilirim" derse suggest_upsell çağır (müşterinin numarasında stokta olan, tarzına uygun 5-6 model fotoğraflı gider) ve "Hangisini beğendiniz?" diye sor. Beğenmezse suggest_upsell'i tekrar çağır (daha önce gösterilenler otomatik hariç tutulur, 5-6 yeni model). İstemezse ısrar etme, sipariş özetine geç.
+   b) Müşteri "evet/olur/bir tane daha alabilirim" derse suggest_upsell çağır (müşterinin numarasında stokta olan, tarzına uygun 4-5 model fotoğraflı gider) ve "Hangisini beğendiniz?" diye sor. Beğenmezse suggest_upsell'i tekrar çağır (daha önce gösterilenler otomatik hariç tutulur, 4-5 yeni model). İstemezse ısrar etme, sipariş özetine geç.
    Ekleme olursa calc_cart; tek sayıdaysa bir sonraki çifte (3→4, 5→6), sepet ${cfg.freeShippingMin.toLocaleString('tr-TR')} TL altındaysa ücretsiz kargo için ek ürüne teşvik et (calc_cart ipuçları). Hangi ürünün ${cfg.campaignPrice} TL olduğunu calc_cart sonucuna göre söyle (en ucuz ürün).
 6. Kısa sipariş özeti (ürün, numara, indirim, kargo, ödenecek toplam, adres, kapıda ödeme) yaz, onay al, submit_order çağır (bir sipariş için bir kez).
 7. Sipariş alınınca: teşekkür, 24 saatte paketlenip SMS ile bilgi verileceği, kapıda ödeme + şeffaf kargo, ürünü teslim alınca memnuniyet fotoğrafı beklediğimiz (📸). Hepsi 3-4 kısa cümlede.
@@ -268,12 +270,12 @@ const TOOLS = [
   },
   {
     name: 'offer_campaign',
-    description: `Sipariş bilgileri tamamlanınca ÇAPRAZ SATIŞ ilk adımı: kampanyayı (2. ürün ${cfg.campaignPrice} TL: sepetteki en ucuz ürün ${cfg.campaignPrice} TL olur; 4 üründe en ucuz 2, 6 üründe en ucuz 3 ürün) müşteriye sunmadan önce çağır. Fotoğraf göndermez. Sonra kısa kampanya sorusunu yaz ve cevabı bekle.`,
+    description: `Sipariş bilgileri tamamlanınca ÇAPRAZ SATIŞ ilk adımı: kampanyayı (2. ürün ${cfg.campaignPrice} TL: sepetteki en ucuz ürün ${cfg.campaignPrice} TL olur; 4 üründe en ucuz 2, 6 üründe en ucuz 3 ürün) müşteriye sunmadan önce çağır. Fotoğraf göndermez. Sonra kısa kampanya sorusunu yaz ("numaranıza uygun modelleri önereyim mi?") ve cevabı bekle.`,
     input_schema: { type: 'object', properties: {} },
   },
   {
     name: 'suggest_upsell',
-    description: "Müşteri ikinci bir ürün almaya istekli olduğunda: müşterinin numarasında stokta olan, tarzına en yakın, daha önce gösterilmemiş 5-6 modeli fotoğraflarıyla GÖNDERİR. Beğenmezse tekrar çağır (yeni modeller gelir).",
+    description: "Müşteri ikinci bir ürün almaya istekli olduğunda: müşterinin numarasında stokta olan, tarzına en yakın, daha önce gösterilmemiş 4-5 modeli fotoğraflarıyla GÖNDERİR. Beğenmezse tekrar çağır (yeni modeller gelir).",
     input_schema: {
       type: 'object',
       properties: {
@@ -364,7 +366,7 @@ const COMMENT_TOOLS = TOOLS.filter((t) => ['search_products', 'get_product'].inc
 // ---------- yardımcılar ----------
 async function downloadImage(url) {
   // müşteri görseli: önbelleğe alınmaz, en fazla 1024 px'e küçültülür
-  const img = await getImage(url, { maxSide: 768, useCache: false });
+  const img = await getCustomerImage(url);
   return { b64: img.b64, mediaType: img.mediaType };
 }
 
@@ -514,28 +516,26 @@ function uniqueByModel(list) {
   return [...first, ...rest];
 }
 
-// Akış: görsel eşleşti mi? -> numara stokta mı? -> değilse diğer renkler -> değilse görsele en benzeyen modeller
+// Akış: görsel eşleşti mi? -> ürün var diye teyit + numara -> numara stokta mı? -> aynı modelin diğer renkleri.
+// Müşterinin sorduğu model dışında HİÇBİR ürünün fotoğrafı kendiliğinden gönderilmez (öneri yalnızca müşteri isterse yapılır).
 async function matchImage(session, size, hint, send) {
   if (!session.lastImage) return { durum: 'gorsel_yok', hata: 'Müşterinin gönderdiği bir görsel yok.' };
   if (!session.identify) startIdentify(session, hint);
   const id = await session.identify;
-  if (!id) return { durum: 'tanimlanamadi', not: 'Görsel şu an işlenemedi. Müşteriden ürün adını/modelini iste veya search_products ile ara.' };
+  if (!id) return { durum: 'tanimlanamadi', not: 'Görsel şu an işlenemedi. "Görseli açamadım" DEME; kibarca modelin adını yazmasını iste veya search_products ile ara. Başka ürün fotoğrafı GÖNDERME.' };
 
   const { desc, ranked } = id;
   const best = ranked[0];
-  const found = best && best.guven >= 0.45 ? best : null;
-  const emin = found && found.guven < 0.7 ? ' Eşleşme kesin değil: fotoğrafı gönderdikten sonra "Aradığınız ürün bu mu?" diye teyit et.' : '';
+  const rival = best ? ranked.find((r) => r.p.modelKey !== best.p.modelKey) : null;
+  // Güven orta düzeyde olsa bile diğer modellerden net öndeyse (en az 0.10 fark) en iyi aday kabul edilir; müşteriye teyit ettirilir
+  const clearLead = best && best.guven >= 0.3 && (!rival || best.guven - rival.guven >= 0.1);
+  const found = best && (best.guven >= 0.45 || clearLead) ? best : null;
+  const emin = found && found.guven < 0.7 ? ' Eşleşme kesin değil: "Aradığınız model bu mu efendim?" diye kısaca teyit et ve aynı mesajda numarasını sor.' : '';
   const out = { tanim: desc || undefined, aranan_beden: size || null };
-
-  // eşleşmeyen/numarası olmayan durumlar için: aynı ranking'den, numarası stokta olan benzer modeller (ek görsel çağrısı gerekmez)
-  const similarFromRanking = (excludeKey) => {
-    const pool = ranked.filter((r) => r.p.inStock && catalog.hasSize(r.p, size) && r.p.modelKey !== excludeKey && r.guven >= 0.25).map((r) => r.p);
-    return uniqueByModel(pool);
-  };
 
   if (id.own) {
     out.musterinin_sectigi_urun = true;
-    out.sec_notu = 'Bu görsel SENİN az önce gönderdiğin ürün fotoğrafı: müşteri bu ürünü SEÇTİ. "Benzer model" deme, fotoğrafı tekrar gönderme; doğrudan sipariş adımlarına geç.';
+    out.sec_notu = 'Bu görsel SENİN az önce gönderdiğin ürün fotoğrafı: müşteri bu ürünü SEÇTİ. "Benzer model" deme, fotoğrafı tekrar gönderme; numarasını sor/stok kontrol et ve doğrudan sipariş adımlarına geç.';
   }
   if (found) {
     const p = found.p;
@@ -543,56 +543,47 @@ async function matchImage(session, size, hint, send) {
     if (!id.own && (session.shown || []).includes(p.id)) {
       out.sec_notu = 'Eşleşen ürün az önce SENİN müşteriye gösterdiğin ürünlerden biri: müşteri büyük ihtimalle onu seçti. "Benzer model" deme; ürünü onunmuş gibi ele al, numarasını sor/stok kontrol et ve siparişe geç.';
     }
+    // aynı modelin diğer renkleri (numara biliniyorsa yalnızca o numarası stokta olanlar)
+    const colors = catalog.otherColors(p, size).slice(0, 4);
+    out.model_adi = p.modelName || p.title;
+    if (colors.length) out.diger_renkler = colors.map((c) => catalog.brief(c, size));
+
     if (!size) {
       out.durum = 'eslesti_beden_sorulmali';
-      if (!id.own) Object.assign(out, photoNote(await sendPhotos(session, send, [p.id])));
-      out.not = 'Ürün katalogda bulundu ve fotoğrafı müşteriye ZATEN gönderildi (tekrar gönderme). Kısa ikna edici tanıtım yaz, fiyatı (fiyat_tl) söyle ve numarasını sor; numara gelince find_alternatives ile stok kontrolü yap.' + emin;
+      if (!id.own) Object.assign(out, photoNote(await sendPhotos(session, send, [p.id, ...colors.map((c) => c.id)])));
+      out.not = 'Ürün katalogda BULUNDU. Müşteriye hemen ve net söyle: "Evet efendim, bu model bizde mevcut 😊", model adı ve fiyatı (fiyat_tl) ver' + (colors.length ? ', aynı modelin diğer renklerinin de fotoğraflarını gönderdiğini belirt' : '') + ' ve kaç numara giydiğini sor. Fotoğraflar ZATEN gönderildi (tekrar gönderme). "Eşleştiremedim", "benzer model" DEME. Başka model fotoğrafı gönderme; numara gelince find_alternatives ile stok/renk kontrolü yap.' + emin;
       return out;
     }
     if (catalog.hasSize(p, size)) {
       out.durum = 'stokta';
-      if (!id.own) Object.assign(out, photoNote(await sendPhotos(session, send, [p.id])));
-      out.not = `${size} numara stokta. Fotoğraf müşteriye ZATEN gönderildi (tekrar gönderme). Güncel fiyatı (fiyat_tl) ve öne çıkan özellikleri söyle, siparişe yönlendir. Sipariş alırken 2+ ürüne teşvik et.` + emin;
+      const ids = id.own ? colors.map((c) => c.id) : [p.id, ...colors.map((c) => c.id)];
+      Object.assign(out, photoNote(await sendPhotos(session, send, ids)));
+      out.not = `${size} numara bu modelde stokta` + (colors.length ? `; aynı modelin ${size} numarası stokta olan diğer renkleri: ${colors.map((c) => c.color || c.title).join(', ')} (fotoğrafları gönderildi)` : '') + '. Hangi renklerde olduğunu müşteriye söyle, fiyatı (fiyat_tl) ver. Sonra offer_campaign ile 2. ürün kampanyasını tanıt (SATIŞ AKIŞI 2b). Fotoğraflar ZATEN gönderildi (tekrar gönderme).' + emin;
       return out;
     }
     out.model_numaralari = catalog.modelSizes(p);
-    const colors = catalog.otherColors(p, size);
     if (colors.length) {
       out.durum = 'beden_yok_diger_renk_var';
-      out.diger_renkler = colors.slice(0, 5).map((c) => catalog.brief(c, size));
-      Object.assign(out, photoNote(await sendPhotos(session, send, colors.slice(0, 5).map((c) => c.id))));
-      out.not = `ÖNCE kısaca "${size} numara bu modelde yok, mevcut numaralar: ${out.model_numaralari.join(', ') || '-'}" de. Aynı modelin ${size} numarası stokta olan diğer renklerinin fotoğrafları müşteriye ZATEN gönderildi (tekrar gönderme). Hangisini beğendiğini sor.` + emin;
+      Object.assign(out, photoNote(await sendPhotos(session, send, colors.map((c) => c.id))));
+      out.not = `ÖNCE kısaca "${size} numara bu renkte yok, mevcut numaralar: ${out.model_numaralari.join(', ') || '-'}" de. Aynı modelin ${size} numarası stokta olan diğer renklerinin fotoğrafları gönderildi (tekrar gönderme); hangi renkler olduğunu söyle ve hangisini beğendiğini sor.` + emin;
       return out;
     }
-    out.durum = 'model_bedeni_yok_benzerler_var';
-    out.model_adi = p.modelName || p.title;
-    let sim = similarFromRanking(p.modelKey);
-    if (sim.length < 3) sim = await similarByVision(session, p, size, desc?.text || '');
-    out.benzer_urunler = sim.slice(0, 5).map((c) => catalog.brief(c, size));
-    if (sim.length) Object.assign(out, photoNote(await sendPhotos(session, send, sim.slice(0, 5).map((c) => c.id))));
-    out.not = sim.length
-      ? `ÖNCE kısaca "${size} numara bu modelde yok, mevcut numaralar: ${out.model_numaralari.join(', ') || '-'}" de. En benzer modellerin fotoğrafları müşteriye ZATEN gönderildi (tekrar gönderme). Hangisini beğendiğini sor.` + emin
-      : `Bu modelin ${size} numarası hiçbir renkte yok ve benzer stoklu model bulunamadı. Müşteriye dürüstçe söyle, farklı numara/model tercihini sor.`;
+    out.durum = 'model_bedeni_yok';
+    out.not = `"${size} numara bu modelde hiçbir renkte yok, mevcut numaralar: ${out.model_numaralari.join(', ') || '-'}" de. Başka model fotoğrafı GÖNDERME. Müşteriye "Numaranıza uygun benzer modelleri önereyim mi?" diye sor; evet derse show_models (size ile) çağır.`;
     return out;
   }
 
-  // Kesin eşleşme yok: "bizde yok" ASLA denmez. Görsele en çok benzeyen (farklı modellerden) en iyi adaylar fotoğrafıyla gösterilir, müşteri seçer.
-  const cand = uniqueByModel(ranked.filter((r) => r.guven >= 0.25 && r.p.inStock).map((r) => r.p)).slice(0, 4);
+  // Kesin eşleşme yok: "bizde yok" ASLA denmez. Görsele en yakın TEK aday gösterilir, müşteri teyit eder.
+  const cand = uniqueByModel(ranked.filter((r) => r.guven >= 0.25 && r.p.inStock).map((r) => r.p)).slice(0, 1);
   if (cand.length) {
     out.durum = 'belirsiz_adaylar';
     out.adaylar = cand.map((c) => catalog.brief(c, size));
     Object.assign(out, photoNote(await sendPhotos(session, send, cand.map((c) => c.id))));
-    out.not = 'Fotoğraftaki ürünü KESİN eşleştiremedik. ASLA "bizde yok / bulunmuyor / katalogda yok" DEME (ürün bizde olabilir). Kısaca "Tam netleştirmek için en çok benzeyen modellerimizi gönderdim, aradığınız bunlardan biri mi? Modelin adını da yazabilirsiniz" de. Fotoğrafları müşteriye ZATEN gönderildi (tekrar gönderme).';
+    out.not = 'Fotoğraftaki ürünü kesin eşleştiremedik; görsele en yakın TEK modelin fotoğrafı gönderildi (tekrar gönderme). ASLA "bizde yok / bulunmuyor" DEME. "Aradığınız model bu mu efendim?" diye sor ve aynı mesajda numarasını sor. Başka model fotoğrafı gönderme.';
     return out;
   }
   out.durum = 'katalogda_yok';
-  let sim = similarFromRanking(null);
-  if (sim.length < 3) sim = await similarByVision(session, null, size, desc?.text || '');
-  out.benzer_urunler = sim.slice(0, 5).map((c) => catalog.brief(c, size));
-  if (sim.length) Object.assign(out, photoNote(await sendPhotos(session, send, sim.slice(0, 5).map((c) => c.id))));
-  out.not = sim.length
-    ? 'Fotoğraftaki ürünü tam eşleştiremedik. "Bizde yok" DEME; "Tam eşleştiremedim, en çok benzeyen modellerimiz şunlar, aradığınız bunlardan biri mi? Modelin adını yazabilirsiniz" de. Fotoğrafları müşteriye ZATEN gönderildi (tekrar gönderme).'
-    : 'Fotoğraftaki ürünü eşleştiremedik. "Bizde yok" DEME; modelin adını veya gönderi/ürün bağlantısını yazmasını kibarca iste, tarzını/numarasını sorarak search_products ile ara.';
+  out.not = 'Fotoğraftaki ürünü eşleştiremedik. "Bizde yok" DEME ve başka model fotoğrafı GÖNDERME. Kibarca modelin adını veya gönderi/ürün bağlantısını yazmasını iste; tarzını/numarasını sorarak search_products ile ara.';
   return out;
 }
 
@@ -612,37 +603,41 @@ async function similarByVision(session, refProduct, size, keywords) {
   return uniqueByModel(good.length ? good : pool.slice(0, 3));
 }
 
-// Metinle model adı verildiğinde de aynı mantık: numara -> diğer renkler -> benzerler
+// Metinle model adı verildiğinde de aynı mantık: numara stokta mı -> aynı modelin diğer renkleri (hangi renklerde numara var).
+// Başka model fotoğrafı gönderilmez; benzer model önerisi yalnızca müşteri isterse (show_models / suggest_upsell) yapılır.
 async function findAlternatives(session, send, productId, size) {
   const p = catalog.getProduct(productId);
   if (!p) return { hata: 'Ürün bulunamadı' };
   if (!size) return { hata: 'Önce müşterinin ayakkabı numarasını öğren.' };
-  if (catalog.hasSize(p, size)) return { durum: 'stokta', urun: catalog.brief(p, size) };
+  const colors = catalog.otherColors(p, size).slice(0, 4);
+  if (catalog.hasSize(p, size)) {
+    const r = await sendPhotos(session, send, [p.id, ...colors.map((c) => c.id)]);
+    return {
+      durum: 'stokta',
+      aranan_beden: size,
+      urun: catalog.brief(p, size),
+      diger_renkler: colors.map((c) => catalog.brief(c, size)),
+      ...photoNote(r),
+      not: `${size} numara stokta` + (colors.length ? `; aynı modelin ${size} numarası olan diğer renkleri: ${colors.map((c) => c.color || c.title).join(', ')} (fotoğrafları gönderildi, tekrar gönderme)` : '') + '. Hangi renklerde olduğunu söyle, sonra offer_campaign ile 2. ürün kampanyasını tanıt (SATIŞ AKIŞI 2b).',
+    };
+  }
   const model_numaralari = catalog.modelSizes(p);
-  const colors = catalog.otherColors(p, size);
   if (colors.length) {
-    const list = colors.slice(0, 5);
-    const r = await sendPhotos(session, send, list.map((c) => c.id));
+    const r = await sendPhotos(session, send, colors.map((c) => c.id));
     return {
       durum: 'beden_yok_diger_renk_var',
       aranan_beden: size,
       model_numaralari,
-      diger_renkler: list.map((c) => catalog.brief(c, size)),
+      diger_renkler: colors.map((c) => catalog.brief(c, size)),
       ...photoNote(r),
-      not: `ÖNCE kısaca "${size} numara bu modelde yok, mevcut numaralar: ${model_numaralari.join(', ') || '-'}" de; sonra aynı modelin ${size} numarası olan diğer renkleri (fotoğrafları gönderildi) öner ve tek kısa soru sor.`,
+      not: `ÖNCE kısaca "${size} numara bu renkte yok, mevcut numaralar: ${model_numaralari.join(', ') || '-'}" de; aynı modelin ${size} numarası olan diğer renkleri (fotoğrafları gönderildi) belirt ve hangisini beğendiğini sor.`,
     };
   }
-  const sim = catalog.similarProducts(p, size, 6).slice(0, 5);
-  const r = await sendPhotos(session, send, sim.map((c) => c.id));
   return {
-    durum: sim.length ? 'model_bedeni_yok_benzerler_var' : 'alternatif_yok',
+    durum: 'model_bedeni_yok',
     aranan_beden: size,
     model_numaralari,
-    benzer_urunler: sim.map((c) => catalog.brief(c, size)),
-    ...photoNote(r),
-    not: sim.length
-      ? `ÖNCE kısaca "${size} numara bu modelde yok, mevcut numaralar: ${model_numaralari.join(', ') || '-'}" de; sonra benzer modelleri (fotoğrafları gönderildi) öner ve tek kısa soru sor.`
-      : `${size} numara bu modelde yok (mevcut: ${model_numaralari.join(', ') || '-'}) ve benzer stoklu model bulunamadı; dürüstçe söyle, başka numara/model tercihini sor.`,
+    not: `${size} numara bu modelde hiçbir renkte yok (mevcut: ${model_numaralari.join(', ') || '-'}). Başka model fotoğrafı GÖNDERME; dürüstçe söyle ve "Numaranıza uygun benzer modelleri önereyim mi?" diye sor. Evet derse show_models (size ile) çağır.`,
   };
 }
 
@@ -889,11 +884,11 @@ async function runTool(name, input, ctx) {
       return findAlternatives(session, send, input.product_id, input.size);
     case 'offer_campaign': {
       session.upsellTurn = session.turn; // sipariş ancak müşteri bu tekliften sonra bir mesaj yazarsa tamamlanır
-      return { ok: true, not: 'Fotoğraf GÖNDERME. Kısaca kampanyayı sun: 2. ürün ' + cfg.campaignPrice + ' TL (aynı siparişte 2 ürün alınırsa sepetteki en ucuz ürün ' + cfg.campaignPrice + ' TL olur; 4 üründe en ucuz 2, 6 üründe en ucuz 3 ürün) ve "Bir ürün daha eklemek ister misiniz?" diye sor. Cevabı bekle.' };
+      return { ok: true, not: 'Fotoğraf GÖNDERME. Kısaca kampanyayı sun: 2. ürün sadece ' + cfg.campaignPrice + ' TL (aynı siparişte; modellerin hepsinden dilediğini seçebilir; 4 üründe en ucuz 2, 6 üründe en ucuz 3 ürün). Avantajı vurgula ve "İsterseniz numaranıza uygun modelleri önereyim mi?" diye sor. Cevabı bekle.' };
     }
     case 'suggest_upsell': {
       session.upsellTurn = session.turn; // sipariş ancak müşteri bu tekliften sonra bir mesaj yazarsa tamamlanır
-      const count = Math.max(5, Math.min(Number(input.count) || 6, 6));
+      const count = Math.max(4, Math.min(Number(input.count) || 5, 5));
       const ref = catalog.getProduct(session.selected) || catalog.getProduct((session.shown || []).slice(-1)[0]);
       const exclude = [...new Set([...(input.exclude_ids || []), ...(session.shown || [])])];
       const list = catalog.suggestForSize(input.size, exclude, count, input.category_hint || ref?.category || '');
@@ -1183,6 +1178,7 @@ export async function handleDirectMessage({ userId, text, imageUrl, imageData, n
       startIdentify(session, [text, caption].filter(Boolean).join(' ')); // ajan cevabı hazırlarken eşleştirme paralel çalışsın
     } catch (e) {
       console.error('[image]', e.message);
+      sys.push('Müşteri bir ürün görseli gönderdi ama teknik bir nedenle görsel indirilemedi. "Görseli açamadım / net gelmedi" gibi cümleler KURMA, özür dileme; kısaca ve kibarca "Hangi modeli kastettiğinizi yazar mısınız? İsterseniz fotoğrafı bir kez daha iletebilirsiniz 😊" de.');
     }
   }
   const hasImage = content.length > 0;
