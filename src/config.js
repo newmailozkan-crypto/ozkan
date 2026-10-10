@@ -43,9 +43,10 @@ export const cfg = {
   siteProductPath: env.SITE_PRODUCT_PATH || '/product/',
   // Instagram DM'de webp destekleniyor; yine de gerekirse JPEG'e çevirmek için true yapılabilir
   convertWebp: String(env.CONVERT_WEBP || '').toLowerCase() === 'true',
-  // Kampanya: her 2 ürün için toplam 300 TL indirim (2'li 300, 4'lü 600, 6'lı 900 ...). Yalnızca TEK siparişte geçerli.
+  // Kampanya: her 2 ürün alımında sepetteki en ucuz ürün CAMPAIGN_PRICE TL olur (2 ürün: 1, 4 ürün: 2, 6 ürün: 3 ürün 599 TL).
+  // Yalnızca TEK siparişte geçerli. Eski "2'li 300 TL / 4'lü 600 TL indirim" kampanyası kaldırıldı.
   campaignStepQty: Number(env.CAMPAIGN_STEP_QTY || 2),
-  campaignStepDiscount: Number(env.CAMPAIGN_STEP_DISCOUNT || 300),
+  campaignPrice: Number(env.CAMPAIGN_PRICE || 599),
   // Yorum yapana otomatik özel mesaj (DM) gönderilsin mi? Varsayılan KAPALI (spam algısını önlemek için). Açmak için COMMENT_DM=true
   commentDm: String(env.COMMENT_DM || '').toLowerCase() === 'true',
   // Sepet (indirim sonrası) bu tutarın altındaysa sabit kargo ücreti eklenir

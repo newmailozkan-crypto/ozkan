@@ -192,12 +192,12 @@ function staticPrompt() {
    • İl, ilçe"
    Eksik gelirse yalnızca eksiği sor. Adreste MAHALLE, CADDE/SOKAK, KAPI NO zorunlu; apartmansa DAİRE NO da zorunlu (kapı no verip daire no vermezse daireyi sor). Müşteri "iş yeri/müstakil/dükkan" derse daire sorma, daire_yok=true ile sorunsuz devam et. Müşteri iş yeri adı gibi bilinen bir yer söylerse adres_notu olarak ekle (adresin sonuna parantezle yazılır).
 5. Bilgiler tamamlanınca UPSELL (ZORUNLU, iki adım): hemen siparişi bitirme.
-   a) Önce offer_campaign çağır ve FOTOĞRAFSIZ, kısa şunu sor: "Siparişiniz hazır 😊 Kampanyamız var: her 2 ürüne 300 TL indirim (2'li 300 TL, 4'lü 600 TL, 6'lı 900 TL, aynı siparişte) 🎁 Bir ürün daha eklemek ister misiniz?" Cevabı BEKLE (sistem, cevap gelmeden siparişi engeller).
+   a) Önce offer_campaign çağır ve FOTOĞRAFSIZ, kısa şunu sor: "Siparişiniz hazır 😊 Kampanyamız var: 2. ürün sadece ${cfg.campaignPrice} TL! 🎁 İkinci bir ürün alırsanız sepetinizdeki en uygun fiyatlı ürün ${cfg.campaignPrice} TL olur (aynı siparişte). Bir ürün daha eklemek ister misiniz?" Cevabı BEKLE (sistem, cevap gelmeden siparişi engeller).
    b) Müşteri "evet/olur/bir tane daha alabilirim" derse suggest_upsell çağır (müşterinin numarasında stokta olan, tarzına uygun 5-6 model fotoğraflı gider) ve "Hangisini beğendiniz?" diye sor. Beğenmezse suggest_upsell'i tekrar çağır (daha önce gösterilenler otomatik hariç tutulur, 5-6 yeni model). İstemezse ısrar etme, sipariş özetine geç.
-   Ekleme olursa calc_cart; tek sayıdaysa bir sonraki çifte (3→4, 5→6), sepet 2.500 TL altındaysa ücretsiz kargo için ek ürüne teşvik et (calc_cart ipuçları).
+   Ekleme olursa calc_cart; tek sayıdaysa bir sonraki çifte (3→4, 5→6), sepet ${cfg.freeShippingMin.toLocaleString('tr-TR')} TL altındaysa ücretsiz kargo için ek ürüne teşvik et (calc_cart ipuçları). Hangi ürünün ${cfg.campaignPrice} TL olduğunu calc_cart sonucuna göre söyle (en ucuz ürün).
 6. Kısa sipariş özeti (ürün, numara, indirim, kargo, ödenecek toplam, adres, kapıda ödeme) yaz, onay al, submit_order çağır (bir sipariş için bir kez).
 7. Sipariş alınınca: teşekkür, 24 saatte paketlenip SMS ile bilgi verileceği, kapıda ödeme + şeffaf kargo, ürünü teslim alınca memnuniyet fotoğrafı beklediğimiz (📸). Hepsi 3-4 kısa cümlede.
-- İndirim yalnızca TEK siparişte birlikte alınan ürünlere uygulanır. Müşteri ayrı ayrı sipariş verirse indirimler birleşmez; kampanya için ürünlerin aynı siparişte olması gerektiğini söyle (önceki sipariş 3 saat içindeyse isterse iptal edip hepsini tek siparişte toplayabileceğini belirt).
+- Kampanya (2. ürün ${cfg.campaignPrice} TL) yalnızca TEK siparişte birlikte alınan ürünlere uygulanır. Eski "2'li alımda 300 TL, 4'lü alımda 600 TL indirim" kampanyası İPTAL edildi, asla bahsetme. Müşteri ayrı ayrı sipariş verirse kampanya birleşmez; kampanya için ürünlerin aynı siparişte olması gerektiğini söyle (önceki sipariş 3 saat içindeyse isterse iptal edip hepsini tek siparişte toplayabileceğini belirt).
 
 ## SİPARİŞ SONRASI
 - Sipariş vermiş müşterinin bilgileri hafızada görünür; sonradan soru sorsa siparişini bilerek cevap ver, aynı bilgileri tekrar isteme.
@@ -268,7 +268,7 @@ const TOOLS = [
   },
   {
     name: 'offer_campaign',
-    description: "Sipariş bilgileri tamamlanınca ÇAPRAZ SATIŞ ilk adımı: kampanyayı (her 2 ürüne 300 TL: 2'li 300, 4'lü 600, 6'lı 900) müşteriye sunmadan önce çağır. Fotoğraf göndermez. Sonra kısa kampanya sorusunu yaz ve cevabı bekle.",
+    description: `Sipariş bilgileri tamamlanınca ÇAPRAZ SATIŞ ilk adımı: kampanyayı (2. ürün ${cfg.campaignPrice} TL: sepetteki en ucuz ürün ${cfg.campaignPrice} TL olur; 4 üründe en ucuz 2, 6 üründe en ucuz 3 ürün) müşteriye sunmadan önce çağır. Fotoğraf göndermez. Sonra kısa kampanya sorusunu yaz ve cevabı bekle.`,
     input_schema: { type: 'object', properties: {} },
   },
   {
@@ -295,7 +295,7 @@ const TOOLS = [
   },
   {
     name: 'calc_cart',
-    description: 'Sepet tutarını hesaplar: kampanya indirimi (her 2 ürüne 300 TL), kargo ücreti (2500 TL altı 100 TL) ve ödenecek toplam. Ürün sayısı/sepet değiştikçe ve sipariş özetinden önce MUTLAKA kullan; ipuçlarına göre 4. ürüne veya ücretsiz kargoya teşvik et.',
+    description: `Sepet tutarını hesaplar: kampanya (2. ürün ${cfg.campaignPrice} TL: her 2 üründe sepetteki en ucuz ürün ${cfg.campaignPrice} TL olur), kargo ücreti (${cfg.freeShippingMin} TL altı ${cfg.shippingFee} TL) ve ödenecek toplam. Ürün sayısı/sepet değiştikçe ve sipariş özetinden önce MUTLAKA kullan; ipuçlarına göre bir sonraki ürüne veya ücretsiz kargoya teşvik et.`,
     input_schema: {
       type: 'object',
       properties: {
@@ -648,7 +648,7 @@ async function submitOrder(session, userId, a) {
     return {
       ok: false,
       hatalar: ['UPSELL_YAPILMADI'],
-      not: 'Sipariş henüz tamamlanamaz: önce offer_campaign çağır, her 2 ürüne 300 TL indirim kampanyasını kısaca sunup "Bir ürün daha eklemek ister misiniz?" diye sor ve müşterinin cevabını bekle. Bu mesajda sipariş özeti yazma, siparişi tamamlama.',
+      not: 'Sipariş henüz tamamlanamaz: önce offer_campaign çağır, "2. ürün ' + cfg.campaignPrice + ' TL" kampanyasını kısaca sunup "Bir ürün daha eklemek ister misiniz?" diye sor ve müşterinin cevabını bekle. Bu mesajda sipariş özeti yazma, siparişi tamamlama.',
     };
   }
   const errors = [];
@@ -664,6 +664,7 @@ async function submitOrder(session, userId, a) {
   if (!Array.isArray(a.items) || !a.items.length) errors.push('Sipariş edilecek ürün yok.');
 
   const items = [];
+  const unitPrices = [];
   let totalQty = 0;
   for (const it of a.items || []) {
     const p = catalog.getProduct(it.product_id);
@@ -677,15 +678,16 @@ async function submitOrder(session, userId, a) {
       continue;
     }
     items.push({ id: p.id, title: p.title, size: String(it.size), qty, unit: p.price, lineTotal: p.price * qty });
+    for (let n = 0; n < qty; n++) unitPrices.push(p.price);
     totalQty += qty;
   }
   if (errors.length) return { ok: false, hatalar: errors };
 
   const subtotal = items.reduce((s, i) => s + i.lineTotal, 0);
-  const priced = priceCart(subtotal, totalQty);
+  const priced = priceCart(unitPrices);
   const discount = priced.indirim_tl;
   const shipping = priced.kargo_ucreti_tl;
-  const campaignNote = discount ? `${totalQty} ürün kampanyası` : '';
+  const campaignNote = discount ? `${totalQty} ürün: en ucuz ${priced.kampanyali_urun_adedi} ürün ${cfg.campaignPrice} TL` : '';
   const total = priced.odenecek_toplam_tl;
 
   const hash = crypto.createHash('sha1').update(JSON.stringify([userId, phone, items.map((i) => [i.id, i.size, i.qty])])).digest('hex');
@@ -875,7 +877,7 @@ async function runTool(name, input, ctx) {
       return findAlternatives(session, send, input.product_id, input.size);
     case 'offer_campaign': {
       session.upsellTurn = session.turn; // sipariş ancak müşteri bu tekliften sonra bir mesaj yazarsa tamamlanır
-      return { ok: true, not: 'Fotoğraf GÖNDERME. Kısaca kampanyayı sun: her 2 ürüne 300 TL indirim (2li alımda 300, 4lü alımda 600, 6lı alımda 900 TL; aynı siparişte) ve "Bir ürün daha eklemek ister misiniz?" diye sor. Cevabı bekle.' };
+      return { ok: true, not: 'Fotoğraf GÖNDERME. Kısaca kampanyayı sun: 2. ürün ' + cfg.campaignPrice + ' TL (aynı siparişte 2 ürün alınırsa sepetteki en ucuz ürün ' + cfg.campaignPrice + ' TL olur; 4 üründe en ucuz 2, 6 üründe en ucuz 3 ürün) ve "Bir ürün daha eklemek ister misiniz?" diye sor. Cevabı bekle.' };
     }
     case 'suggest_upsell': {
       session.upsellTurn = session.turn; // sipariş ancak müşteri bu tekliften sonra bir mesaj yazarsa tamamlanır
@@ -931,16 +933,14 @@ async function runTool(name, input, ctx) {
       };
     }
     case 'calc_cart': {
-      let sub = 0;
-      let qty = 0;
+      const unitPrices = [];
       for (const it of input.items || []) {
         const p = catalog.getProduct(it.product_id);
         if (!p) return { hata: `Ürün bulunamadı: ${it.product_id}` };
         const q = Math.max(1, Math.min(5, Number(it.qty) || 1));
-        sub += p.price * q;
-        qty += q;
+        for (let n = 0; n < q; n++) unitPrices.push(p.price);
       }
-      return { urun_adedi: qty, ...priceCart(sub, qty) };
+      return { urun_adedi: unitPrices.length, ...priceCart(unitPrices) };
     }
     case 'submit_order':
       return submitOrder(session, userId, input);
