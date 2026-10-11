@@ -60,6 +60,7 @@ export const cfg = {
   // Maliyet koruması (USD, tahmini): günlük uyarı eşiği ve (0 = kapalı) günlük limit
   dailyAlertUsd: Number(env.DAILY_ALERT_USD ?? 3),
   dailyCapUsd: Number(env.DAILY_CAP_USD ?? 0),
+  memoFile: env.MEMO_FILE || 'data/memos.json',
   visualFile: env.VISUAL_FILE || 'data/visual-cache.json',
   usageFile: env.USAGE_FILE || 'data/usage.json',
   // Sistem istemine ek olarak siteden çekilen sayfa metinleri eklensin mi (varsayılan hayır: pahalı ve kurallar kodda)

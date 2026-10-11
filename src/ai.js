@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import crypto from 'node:crypto';
 import { cfg } from './config.js';
 import * as catalog from './catalog.js';
@@ -213,9 +215,10 @@ function staticPrompt() {
 
 function systemBlocks(userId) {
   const memo = sessions.get(String(userId))?.memo || '';
-  const dyn = `${memo ? memo + '\n\n' : ''}${cfg.siteInfoInPrompt ? `## GÜNCEL SİTE BİLGİSİ (ek bilgi; MAĞAZA KURALLARI ile çelişirse onlar geçerli)\n${siteInfoText()}\n\n` : ''}Bugünün tarihi: ${new Date().toLocaleDateString('tr-TR', { timeZone: 'Europe/Istanbul' })}`;
+  const dyn = `${cfg.siteInfoInPrompt ? `## GÜNCEL SİTE BİLGİSİ (ek bilgi; MAĞAZA KURALLARI ile çelişirse onlar geçerli)\n${siteInfoText()}\n\n` : ''}Bugünün tarihi: ${new Date().toLocaleDateString('tr-TR', { timeZone: 'Europe/Istanbul' })}`;
   return [
     { type: 'text', text: staticPrompt() + '\n\n' + storeRulesText(), cache_control: { type: 'ephemeral' } },
+    ...(memo ? [{ type: 'text', text: memo, cache_control: { type: 'ephemeral' } }] : []), // müşteri hafızası önbellekli: sonraki çağrılarda ~10 kat ucuz
     { type: 'text', text: dyn + (customers.learnedText() ? '\n\n' + customers.learnedText() : '') + (customers.contextText(userId) ? '\n\n' + customers.contextText(userId) : '') },
   ];
 }
@@ -1193,9 +1196,35 @@ export const hasSession = (id) => (sessions.get(String(id))?.messages.length || 
 
 // Konuşma hafızası: Instagram sohbet kaydı (kalıcı) okunup bota "kayıt + özet" olarak verilir.
 // Yeniden başlatma, uzun ara (3 gün sonra yazma) veya kısaltılan oturumdan sonra bot geçmişi yine bilir.
+// Hafıza diske de yazılır (bot yeniden başlasa ve disk kalıcıysa Instagram'dan tekrar okumaya gerek kalmaz); disk silinirse Instagram kaydından (ücretsiz) yeniden kurulur.
+const storedMemos = new Map();
+try {
+  for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(cfg.memoFile, 'utf8')))) if (Date.now() - v.at < 14 * 86400000) storedMemos.set(k, v);
+} catch {
+  /* dosya yok */
+}
+let memoSaveT = null;
+function saveMemos() {
+  clearTimeout(memoSaveT);
+  memoSaveT = setTimeout(() => {
+    try {
+      fs.mkdirSync(path.dirname(cfg.memoFile), { recursive: true });
+      fs.writeFileSync(cfg.memoFile, JSON.stringify(Object.fromEntries(storedMemos)));
+    } catch {
+      /* önemsiz */
+    }
+  }, 3000);
+  memoSaveT.unref?.();
+}
 export function needsMemo(id) {
-  const s = sessions.get(String(id));
-  if (!s || !s.memoAt) return true;
+  let s = sessions.get(String(id));
+  if (!s || !s.memoAt) {
+    const st = storedMemos.get(String(id));
+    if (!st) return true;
+    s = getSession(String(id));
+    s.memo = st.memo;
+    s.memoAt = st.at;
+  }
   const trimming = s.messages.length >= MAX_HISTORY - 2;
   return Date.now() - s.memoAt > (trimming ? 20 : 12 * 60) * 60 * 1000;
 }
@@ -1209,6 +1238,7 @@ export function buildMemo(history) {
   const asked = [];
   for (const h of history.slice(-90)) {
     const t = String(h.text || '').replace(/\s+/g, ' ').slice(0, 170);
+    h._t = t;
     if (!t && !h.media) continue;
     if (h.role === 'assistant') {
       const m = t.match(/^(.{3,70}?) — [\d.]+ TL$/);
@@ -1232,14 +1262,15 @@ export function buildMemo(history) {
     '## KONUŞMA HAFIZASI (Instagram sohbet kaydından; tarih saat sırasıyla, en eski üstte)',
     'Bu müşteriyle daha önce yazıştık. Aşağıdaki kayda göre devam et: sorduğu modeli, numarasını, gönderdiği görselleri, gösterdiğimiz ürünleri bil. Aynı şeyi tekrar sorma; müşteri günler sonra yazsa bile kaldığı yerden yardımcı ol. "Sohbet geçmişinde görsel yok / anlayamadım" DEME; kayıt aşağıda.',
     ...(facts.length ? ['ÖZET: ' + facts.join(' || ')] : []),
-    'KAYIT:',
-    ...lines,
+    'SON MESAJLAR:',
+    ...lines.slice(-14).map((l) => l.slice(0, 150)),
   ].join('\n');
 }
 export function setMemo(id, history) {
   const s = getSession(String(id));
   s.memo = buildMemo(history);
   s.memoAt = Date.now();
+  if (s.memo) { storedMemos.set(String(id), { memo: s.memo, at: s.memoAt }); saveMemos(); }
 }
 
 export async function handleDirectMessage({ userId, text, imageUrl, imageData, notes = [], replyTo, caption, history, send }) {
