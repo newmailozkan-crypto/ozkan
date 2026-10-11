@@ -1122,16 +1122,63 @@ function compactHistory(messages) {
   }
 }
 
+// Konuşma kaydını Claude API kurallarına uydurur: her tool_use'dan hemen sonra eşleşen tool_result olmalı, yetim tool_result olmamalı.
+// Yarım kalan bir işlem (zaman aşımı, hata) kaydı bozarsa bu müşteri sonsuza dek "yoğunluk" hatası alırdı; burada kendiliğinden onarılır.
+export function repairMessages(messages) {
+  const out = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    out.push(m);
+    if (m.role === 'assistant' && Array.isArray(m.content)) {
+      const ids = m.content.filter((b) => b.type === 'tool_use').map((b) => b.id);
+      if (!ids.length) continue;
+      const next = messages[i + 1];
+      const have = new Set(next && next.role === 'user' && Array.isArray(next.content) ? next.content.filter((b) => b.type === 'tool_result').map((b) => b.tool_use_id) : []);
+      const missing = ids.filter((id) => !have.has(id));
+      if (missing.length) {
+        const fill = missing.map((id) => ({ type: 'tool_result', tool_use_id: id, content: JSON.stringify({ hata: 'işlem yarım kaldı' }) }));
+        if (next && next.role === 'user' && Array.isArray(next.content)) next.content = [...fill, ...next.content];
+        else out.push({ role: 'user', content: fill });
+      }
+    }
+  }
+  // yetim tool_result bloklarını at
+  for (let i = 0; i < out.length; i++) {
+    const m = out[i];
+    if (m.role !== 'user' || !Array.isArray(m.content) || !m.content.some((b) => b.type === 'tool_result')) continue;
+    const prev = out[i - 1];
+    const ok = new Set(prev && prev.role === 'assistant' && Array.isArray(prev.content) ? prev.content.filter((b) => b.type === 'tool_use').map((b) => b.id) : []);
+    m.content = m.content.filter((b) => b.type !== 'tool_result' || ok.has(b.tool_use_id));
+    if (!m.content.length) m.content = '[önceki işlem yarım kaldı]';
+  }
+  messages.splice(0, messages.length, ...out);
+  return messages;
+}
+
+async function createSafe(session, params, tag) {
+  repairMessages(session.messages);
+  try {
+    return await create({ ...params, messages: session.messages }, tag);
+  } catch (e) {
+    if (e?.status === 400 && /tool_use|tool_result|messages\./i.test(String(e.message))) {
+      console.warn('[agent] konuşma kaydı bozuk, sıfırlanıp tekrar deneniyor:', String(e.message).slice(0, 160));
+      const lastUser = [...session.messages].reverse().find((m) => m.role === 'user' && (typeof m.content === 'string' || m.content.every((b) => b.type !== 'tool_result')));
+      session.messages.splice(0, session.messages.length, ...(lastUser ? [lastUser] : []));
+      return await create({ ...params, messages: session.messages }, tag);
+    }
+    throw e;
+  }
+}
+
 async function agentLoop({ session, userId, send, tools }) {
   let photoSent = false;
   let nudged = false;
   for (let i = 0; i < 10; i++) {
-    const resp = await create({
+    const resp = await createSafe(session, {
       model: cfg.model,
       max_tokens: 450,
       system: systemBlocks(userId),
       tools,
-      messages: session.messages,
     }, 'sohbet');
     session.messages.push({ role: 'assistant', content: resp.content });
 

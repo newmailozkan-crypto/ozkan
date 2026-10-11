@@ -226,11 +226,16 @@ async function processBatch(senderId, items) {
       noteBotMessage(senderId);
     },
   };
-  const watchdog = new Promise((_, rej) => { const t = setTimeout(() => rej(new Error('işlem 150 sn içinde bitmedi (zaman aşımı)')), 150000); t.unref?.(); });
+  // 150 sn içinde bitmezse yalnızca müşteri/ekip uyarılır; sıra, işlem gerçekten bitene kadar beklenir (aynı müşteriye ait iki işlem iç içe girip konuşma kaydını bozmasın)
+  let slow = false;
+  const timer = setTimeout(() => { slow = true; onBatchError(senderId, new Error('işlem 150 sn içinde bitmedi (zaman aşımı)')); }, 150000);
   try {
-    await Promise.race([watchdog, processBatchInner(senderId, items, send)]);
+    await processBatchInner(senderId, items, send);
   } catch (e) {
-    return onBatchError(senderId, e);
+    if (!slow) await onBatchError(senderId, e);
+    else console.error('[dm] geç hata:', e);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
