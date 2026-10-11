@@ -155,6 +155,22 @@ export async function listOwnMedia() {
 }
 
 // Müşteriyle son yazışmalar (bot yeniden başlamış veya insan yazışmış olsa bile sohbet geçmişini okuyabilmek için)
+// En son yazışılan müşterilerin kimlikleri (Instagram'ın son etkinliğe göre sıraladığı sohbet listesi)
+export async function recentCustomerIds(n = 5) {
+  try {
+    const r = await call(`/me/conversations?platform=instagram&limit=${n}&fields=participants`, null, 'GET');
+    const ids = [];
+    for (const c of r?.data || []) {
+      const other = (c.participants?.data || []).find((p) => String(p.id) !== String(cfg.igAccountId));
+      if (other?.id) ids.push(String(other.id));
+    }
+    return ids.slice(0, n);
+  } catch (e) {
+    console.error('[history] son sohbetler okunamadı:', e.message);
+    return [];
+  }
+}
+
 export async function fetchHistory(userId, limit = 20) {
   try {
     let r;

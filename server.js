@@ -419,3 +419,18 @@ setTimeout(() => warmProductHashes().catch(() => {}), 45 * 1000).unref?.();
 startSiteRefresh();
 
 app.listen(cfg.port, () => console.log(`[server] ${cfg.port} portunda dinleniyor`));
+
+// Bot (yeniden) başlayınca en son yazışılan 5 müşterinin konuşmasını Instagram kaydından hafızaya al (Claude çağrısı yok, ücretsiz)
+setTimeout(async () => {
+  try {
+    const ids = await ig.recentCustomerIds(5);
+    for (const id of ids) {
+      if (!needsMemo(id)) continue;
+      const h = await ig.fetchHistory(id, 100);
+      if (h.length) setMemo(id, h);
+    }
+    console.log(`[hafıza] başlangıçta ${ids.length} son sohbet hafızaya alındı`);
+  } catch (e) {
+    console.error('[hafıza] başlangıç yüklemesi başarısız:', e.message);
+  }
+}, 8000).unref?.();
