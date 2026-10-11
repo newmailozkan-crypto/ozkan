@@ -13,7 +13,7 @@ import { describeCustomerImage } from './visualIndex.js';
 
 // ---------- oturumlar (bellek içi) ----------
 const sessions = new Map();
-const MAX_HISTORY = 16;
+const MAX_HISTORY = 30;
 const SESSION_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 
 function getSession(userId) {
@@ -212,7 +212,8 @@ function staticPrompt() {
 }
 
 function systemBlocks(userId) {
-  const dyn = `${cfg.siteInfoInPrompt ? `## GÜNCEL SİTE BİLGİSİ (ek bilgi; MAĞAZA KURALLARI ile çelişirse onlar geçerli)\n${siteInfoText()}\n\n` : ''}Bugünün tarihi: ${new Date().toLocaleDateString('tr-TR', { timeZone: 'Europe/Istanbul' })}`;
+  const memo = sessions.get(String(userId))?.memo || '';
+  const dyn = `${memo ? memo + '\n\n' : ''}${cfg.siteInfoInPrompt ? `## GÜNCEL SİTE BİLGİSİ (ek bilgi; MAĞAZA KURALLARI ile çelişirse onlar geçerli)\n${siteInfoText()}\n\n` : ''}Bugünün tarihi: ${new Date().toLocaleDateString('tr-TR', { timeZone: 'Europe/Istanbul' })}`;
   return [
     { type: 'text', text: staticPrompt() + '\n\n' + storeRulesText(), cache_control: { type: 'ephemeral' } },
     { type: 'text', text: dyn + (customers.learnedText() ? '\n\n' + customers.learnedText() : '') + (customers.contextText(userId) ? '\n\n' + customers.contextText(userId) : '') },
@@ -1190,10 +1191,60 @@ async function agentLoop({ session, userId, send, tools }) {
 // ---------- DM ----------
 export const hasSession = (id) => (sessions.get(String(id))?.messages.length || 0) > 0;
 
+// Konuşma hafızası: Instagram sohbet kaydı (kalıcı) okunup bota "kayıt + özet" olarak verilir.
+// Yeniden başlatma, uzun ara (3 gün sonra yazma) veya kısaltılan oturumdan sonra bot geçmişi yine bilir.
+export function needsMemo(id) {
+  const s = sessions.get(String(id));
+  if (!s || !s.memoAt) return true;
+  const trimming = s.messages.length >= MAX_HISTORY - 2;
+  return Date.now() - s.memoAt > (trimming ? 20 : 12 * 60) * 60 * 1000;
+}
+
+const hhmm = (t) => (t ? new Date(t).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
+export function buildMemo(history) {
+  if (!history?.length) return '';
+  const lines = [];
+  const shown = [];
+  const sizes = [];
+  const asked = [];
+  for (const h of history.slice(-90)) {
+    const t = String(h.text || '').replace(/\s+/g, ' ').slice(0, 170);
+    if (!t && !h.media) continue;
+    if (h.role === 'assistant') {
+      const m = t.match(/^(.{3,70}?) — [\d.]+ TL$/);
+      if (m && !shown.includes(m[1])) shown.push(m[1]);
+      lines.push(`${hhmm(h.at)} Biz: ${h.media ? '(fotoğraf gönderdik)' : t}`);
+    } else {
+      if (h.media) lines.push(`${hhmm(h.at)} Müşteri: (görsel/video/paylaşım gönderdi)`);
+      else {
+        lines.push(`${hhmm(h.at)} Müşteri: ${t}`);
+        const sz = t.match(/(?:^|[^\d])(3[5-9]|4[0-9])(?:[.,]5)?(?!\d)/);
+        if (sz && /numara|no\b|giyiyorum|istiyorum|var mı|beden|\b\d{2}\b/i.test(t)) sizes.push(sz[0].replace(/^\D/, ''));
+        if (/\?|var mı|fiyat|kaç|renk|stok/i.test(t)) asked.push(t.slice(0, 90));
+      }
+    }
+  }
+  const facts = [];
+  if (sizes.length) facts.push(`Müşterinin belirttiği numara(lar), sondan: ${[...new Set(sizes.reverse())].slice(0, 3).join(', ')}`);
+  if (shown.length) facts.push(`Daha önce gösterdiğimiz ürünler: ${shown.slice(-10).join('; ')}`);
+  if (asked.length) facts.push(`Müşterinin son soruları: ${asked.slice(-4).join(' | ')}`);
+  return [
+    '## KONUŞMA HAFIZASI (Instagram sohbet kaydından; tarih saat sırasıyla, en eski üstte)',
+    'Bu müşteriyle daha önce yazıştık. Aşağıdaki kayda göre devam et: sorduğu modeli, numarasını, gönderdiği görselleri, gösterdiğimiz ürünleri bil. Aynı şeyi tekrar sorma; müşteri günler sonra yazsa bile kaldığı yerden yardımcı ol. "Sohbet geçmişinde görsel yok / anlayamadım" DEME; kayıt aşağıda.',
+    ...(facts.length ? ['ÖZET: ' + facts.join(' || ')] : []),
+    'KAYIT:',
+    ...lines,
+  ].join('\n');
+}
+export function setMemo(id, history) {
+  const s = getSession(String(id));
+  s.memo = buildMemo(history);
+  s.memoAt = Date.now();
+}
+
 export async function handleDirectMessage({ userId, text, imageUrl, imageData, notes = [], replyTo, caption, history, send }) {
   await catalog.ensureLoaded();
   const session = getSession(userId);
-  if (history?.length && session.messages.length === 0) for (const h of history) addToSession(session, h.role, h.text.slice(0, 400)); // önceki konuşmayı oku
   session.turn = (session.turn || 0) + 1;
   trimHistory(session.messages);
   compactHistory(session.messages);

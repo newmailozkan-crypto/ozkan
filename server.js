@@ -3,9 +3,9 @@ import crypto from 'node:crypto';
 import { cfg, checkConfig } from './src/config.js';
 import * as ig from './src/instagram.js';
 import { usageReport } from './src/claude.js';
-import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
+import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, allProducts, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
-import { handleDirectMessage, handleComment, warmProductHashes, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup, humanMessage, observeCustomer, humanActive, hasSession, identifyLog } from './src/ai.js';
+import { handleDirectMessage, handleComment, warmProductHashes, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup, humanMessage, observeCustomer, humanActive, hasSession, identifyLog, needsMemo, setMemo } from './src/ai.js';
 import { sendTelegram } from './src/telegram.js';
 import { resolveShared, isMediaAttachment } from './src/media.js';
 import { createBatcher } from './src/batch.js';
@@ -194,6 +194,23 @@ async function processMessage(event) {
   batcher.add(senderId, { msg, image, sharedAtts, story, hasShared });
 }
 
+// Bot yeniden başlayınca "yanıtla" yapılan mesajın hangi ürün olduğu hafızada kalmaz: Instagram sohbet kaydından bul.
+// Ürün fotoğrafını hemen ardından başlıklı bir mesaj ("Roven Beyaz Gri — 1.199 TL") izler.
+function resolveReplyFromHistory(history, rmid) {
+  const i = (history || []).findIndex((h) => h.mid === rmid);
+  if (i < 0) return null;
+  const h = history[i];
+  if (h.role !== 'assistant') return { text: h.text };
+  const cand = [h, ...history.slice(i + 1, i + 3).filter((x) => x.role === 'assistant')].map((x) => x.text);
+  for (const t of cand) {
+    const m = String(t).match(/^(.+?) — [\d.]+ TL/);
+    if (!m) continue;
+    const p = allProducts().find((x) => x.title === m[1].trim());
+    if (p) return { productId: p.id, text: t };
+  }
+  return { text: h.text };
+}
+
 const lastResolved = new Map(); // müşteri -> paylaşım görseli en son ne zaman çözüldü
 
 async function processBatch(senderId, items) {
@@ -273,14 +290,16 @@ async function processBatchInner(senderId, items, send) {
 
     // "Yanıtla" ile bir mesajımıza cevap verdiyse
     const rmid = items.map((i) => i.msg.reply_to?.mid).find(Boolean);
-    const replyTo = rmid ? sentMap.get(rmid) || { unknown: true } : null;
+    let replyTo = rmid ? sentMap.get(rmid) || null : null;
 
-    // Yeni oturumsa (yeniden başlama / insan yazışması) önceki konuşmayı Instagram'dan oku
+    // Konuşma hafızası: yeni oturum / yeniden başlama / uzun ara / kısaltılan oturum -> tüm sohbeti Instagram'dan oku (kalıcı kayıt)
     let history = null;
-    if (!hasSession(senderId)) {
+    if (needsMemo(senderId) || (rmid && !replyTo)) {
       const mids = new Set(items.map((i) => i.msg.mid));
-      history = (await ig.fetchHistory(senderId, 20)).filter((h) => !mids.has(h.mid));
+      history = (await ig.fetchHistory(senderId, 100)).filter((h) => !mids.has(h.mid));
+      setMemo(senderId, history);
     }
+    if (rmid && !replyTo) replyTo = resolveReplyFromHistory(history, rmid) || { unknown: true };
 
     const reply = await handleDirectMessage({
       userId: senderId,

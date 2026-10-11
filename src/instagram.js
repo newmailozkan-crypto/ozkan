@@ -157,13 +157,20 @@ export async function listOwnMedia() {
 // Müşteriyle son yazışmalar (bot yeniden başlamış veya insan yazışmış olsa bile sohbet geçmişini okuyabilmek için)
 export async function fetchHistory(userId, limit = 20) {
   try {
-    const r = await call(`/me/conversations?platform=instagram&user_id=${encodeURIComponent(userId)}&fields=messages.limit(${limit}){id,message,from,created_time,attachments}`, null, 'GET');
+    let r;
+    try {
+      r = await call(`/me/conversations?platform=instagram&user_id=${encodeURIComponent(userId)}&fields=messages.limit(${limit}){id,message,from,created_time,attachments}`, null, 'GET');
+    } catch (e) {
+      if (limit <= 25) throw e;
+      r = await call(`/me/conversations?platform=instagram&user_id=${encodeURIComponent(userId)}&fields=messages.limit(25){id,message,from,created_time,attachments}`, null, 'GET'); // büyük limit reddedilirse küçük dene
+    }
     const msgs = r?.data?.[0]?.messages?.data || [];
     return msgs
       .map((m) => ({
         mid: m.id,
         role: String(m.from?.id) === String(cfg.igAccountId) ? 'assistant' : 'user',
         text: String(m.message || '').trim() || (m.attachments?.data?.length ? '[görsel/paylaşım gönderildi]' : ''),
+        media: !String(m.message || '').trim() && Boolean(m.attachments?.data?.length),
         at: Date.parse(m.created_time) || 0,
       }))
       .filter((m) => m.text)
