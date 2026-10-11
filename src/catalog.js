@@ -781,8 +781,17 @@ export function hasSize(p, size) {
   return p.sizes.some((s) => s.inStock && sizeKey(s.size) === k);
 }
 
+// Ürün kimliği yerine ürün adı/"slug" (ör. "lifestyle-beyaz-lacivert") verilirse başlığa göre bulunur.
+// Bot yeniden başlayınca/hafıza kısalınca araç sonuçlarındaki sayısal kimlikleri göremeyip adı kimlik diye yazabiliyor.
+const fold = (t) => String(t || '').toLocaleLowerCase('tr').replace(/ı/g, 'i').replace(/ş/g, 's').replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ö/g, 'o').replace(/ç/g, 'c').replace(/[^a-z0-9]+/g, ' ').trim();
 export function getProduct(id) {
-  return byId.get(String(id)) || null;
+  const hit = byId.get(String(id));
+  if (hit) return hit;
+  const key = fold(id);
+  if (!key || /^\d+$/.test(key)) return null;
+  const exact = products.filter((p) => fold(p.title) === key);
+  if (exact.length) return exact.find((p) => p.inStock) || exact[0];
+  return null;
 }
 
 // "botlar" -> "bot" gibi basit çekim eki temizliği

@@ -333,7 +333,7 @@ const TOOLS = [
           type: 'array',
           items: {
             type: 'object',
-            properties: { product_id: { type: 'string' }, size: { type: 'string' }, qty: { type: 'integer' } },
+            properties: { product_id: { type: 'string', description: 'Araç sonuçlarındaki SAYISAL ürün id (ürün adı değil). Bilmiyorsan önce search_products çağır.' }, size: { type: 'string' }, qty: { type: 'integer' } },
             required: ['product_id', 'size'],
           },
         },
@@ -776,7 +776,7 @@ async function submitOrder(session, userId, a) {
     const p = catalog.getProduct(it.product_id);
     const qty = Math.max(1, Math.min(5, Number(it.qty) || 1));
     if (!p) {
-      errors.push(`Ürün bulunamadı: ${it.product_id}`);
+      errors.push(`Ürün bulunamadı: ${it.product_id}. product_id olarak ürün ADI değil, araç sonuçlarındaki SAYISAL id yazılmalı: önce search_products ile ürünü ara, dönen id'yi kullan.`);
       continue;
     }
     if (!catalog.hasSize(p, it.size)) {
