@@ -700,6 +700,51 @@ function normalizePhone(p) {
   return /^5\d{9}$/.test(d) ? '0' + d : null;
 }
 
+// Telegram'a iletilemeyen siparişler kaybolmasın: sıraya alınır, diske yazılır, her 2 dakikada yeniden denenir (en çok 48 saat)
+const pendingOrders = [];
+try {
+  pendingOrders.push(...JSON.parse(fs.readFileSync(cfg.pendingOrdersFile, 'utf8')));
+} catch {
+  /* dosya yok */
+}
+function savePending() {
+  try {
+    fs.mkdirSync(path.dirname(cfg.pendingOrdersFile), { recursive: true });
+    fs.writeFileSync(cfg.pendingOrdersFile, JSON.stringify(pendingOrders));
+  } catch {
+    /* önemsiz */
+  }
+}
+export const getPendingOrders = () => pendingOrders.map((p) => ({ siparis_no: p.order.id, musteri: p.order.name, telefon: p.order.phone, tutar_tl: p.order.total, deneme: p.tries, son_hata: p.lastError, at: p.at }));
+export const getPendingOrderTexts = () => pendingOrders.map((p) => p.text);
+let retrying = false;
+async function retryPending() {
+  if (retrying || !pendingOrders.length) return;
+  retrying = true;
+  try {
+    for (const p of [...pendingOrders]) {
+      if (Date.now() - p.at > 48 * 3600 * 1000) {
+        pendingOrders.splice(pendingOrders.indexOf(p), 1);
+        savePending();
+        continue;
+      }
+      try {
+        await sendTelegram(`⏱ GEÇ İLETİLDİ (Telegram bağlantısı kesilmişti)\n\n${p.text}`);
+        pendingOrders.splice(pendingOrders.indexOf(p), 1);
+        savePending();
+        console.log('[telegram] bekleyen sipariş iletildi:', p.order.id);
+      } catch (e) {
+        p.tries++;
+        p.lastError = e.message;
+      }
+    }
+  } finally {
+    retrying = false;
+  }
+}
+setInterval(retryPending, 2 * 60 * 1000).unref?.();
+setTimeout(retryPending, 20000).unref?.();
+
 async function submitOrder(session, userId, a) {
   // Üst satış kapısı: önce suggest_upsell yapılmış ve müşteri ona cevap yazmış olmalı
   const qtyTotal = (a.items || []).reduce((n, it) => n + (Number(it.qty) || 1), 0);
@@ -761,8 +806,10 @@ async function submitOrder(session, userId, a) {
   try {
     await sendTelegram(formatOrder(order));
   } catch (e) {
-    console.error('[telegram] sipariş iletilemedi:', e.message);
-    return { ok: false, hatalar: ['Sipariş sistemine şu an ulaşılamadı. Müşteriye siparişi ALDIĞINI söyleme; WhatsApp hattına yönlendir.'] };
+    // Sipariş KAYBOLMASIN: sıraya alınır ve Telegram düzelince otomatik iletilir; müşteriye normal onay verilir
+    console.error('[telegram] sipariş iletilemedi, sıraya alındı:', e.message);
+    pendingOrders.push({ order, text: formatOrder(order), at: Date.now(), tries: 1, lastError: e.message });
+    savePending();
   }
   session.lastOrder = { hash, ts: Date.now(), total };
   session.upsellTurn = undefined;

@@ -5,8 +5,8 @@ import * as ig from './src/instagram.js';
 import { usageReport } from './src/claude.js';
 import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, allProducts, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
-import { handleDirectMessage, handleComment, warmProductHashes, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup, humanMessage, observeCustomer, humanActive, hasSession, identifyLog, needsMemo, setMemo } from './src/ai.js';
-import { sendTelegram } from './src/telegram.js';
+import { handleDirectMessage, handleComment, warmProductHashes, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup, humanMessage, observeCustomer, humanActive, hasSession, identifyLog, needsMemo, setMemo, getPendingOrders } from './src/ai.js';
+import { sendTelegram, telegramDiagnose } from './src/telegram.js';
 import { resolveShared, isMediaAttachment } from './src/media.js';
 import { createBatcher } from './src/batch.js';
 import { initImages, instagramImageUrl, serveImage } from './src/images.js';
@@ -75,6 +75,8 @@ function recordEvent(kind, info) {
 }
 app.get('/debug/events', (req, res) => debugAuth(req, res) && res.json({ son_olaylar: [...events].reverse() }));
 app.get('/debug/identify', (req, res) => debugAuth(req, res) && res.json({ kayitlar: [...identifyLog].reverse() }));
+app.get('/debug/telegram', async (req, res) => debugAuth(req, res) && res.json(await telegramDiagnose().catch((e) => ({ hata: e.message }))));
+app.get('/debug/orders', (req, res) => debugAuth(req, res) && res.json({ telegrama_iletilemeyen_bekleyen_siparisler: getPendingOrders() }));
 app.get('/debug/families', (req, res) => debugAuth(req, res) && res.json(debugFamilies()));
 
 // Instagram'ın alabilmesi için katalogdaki webp görselleri JPEG olarak sunar (yalnızca katalogda kayıtlı görseller)

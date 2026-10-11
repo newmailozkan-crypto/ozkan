@@ -12,6 +12,29 @@ export async function sendTelegram(text) {
   return data;
 }
 
+// Telegram bağlantısını teşhis eder (anahtar göstermez): bot kim, grup görünüyor mu, bot grupta mı
+export async function telegramDiagnose() {
+  const out = { chat_id_ayari: String(cfg.tgChatId || ''), token_var: Boolean(cfg.tgToken) };
+  const call = async (method, body) => {
+    const r = await fetch(`https://api.telegram.org/bot${cfg.tgToken}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    return r.json().catch(() => ({}));
+  };
+  const me = await call('getMe');
+  out.bot = me.ok ? '@' + me.result.username : `HATA: ${me.description}`;
+  const chat = await call('getChat', { chat_id: cfg.tgChatId });
+  out.grup = chat.ok ? { baslik: chat.result.title, tur: chat.result.type, id: chat.result.id } : `HATA: ${chat.description}`;
+  if (chat.ok && me.ok) {
+    const m = await call('getChatMember', { chat_id: cfg.tgChatId, user_id: me.result.id });
+    out.botun_grupta_durumu = m.ok ? m.result.status : `HATA: ${m.description}`;
+  }
+  out.yorum = !me.ok
+    ? 'Bot anahtarı (TELEGRAM_BOT_TOKEN) geçersiz.'
+    : !chat.ok
+      ? 'Bu bot bu gruba erişemiyor: TELEGRAM_CHAT_ID yanlış olabilir (başında - işareti olmalı) veya bot gruba eklenmemiş / gruptan çıkarılmış.'
+      : 'Telegram bağlantısı sağlam görünüyor.';
+  return out;
+}
+
 const tl = (n) => `${Number(n).toLocaleString('tr-TR')} TL`;
 
 export function formatOrder(o) {
