@@ -424,11 +424,20 @@ async function rankByVision(session, cands, instruction, opts = {}) {
     }
     content.push({
       type: 'text',
-      text: `${instruction} HER adayı puanla (hiçbiri benzemiyorsa düşük puan ver). Yalnızca JSON: {"eslesmeler":[{"id":"","guven":0.0-1.0,"neden":"kısa"}]}`,
+      text: `${instruction} HER adayı puanla (hiçbiri benzemiyorsa düşük puan ver). Yalnızca JSON: {"eslesmeler":[{"id":"","guven":0.0-1.0,"neden":"en fazla 8 kelime"}]}`,
     });
-    const r = await create({ model, max_tokens: 700, messages: [{ role: 'user', content }] }, tag);
-    const j = extractJson(textOf(r));
-    return (j?.eslesmeler || [])
+    const r = await create({ model, max_tokens: 1800, messages: [{ role: 'user', content }] }, tag);
+    const raw = textOf(r);
+    let list = extractJson(raw)?.eslesmeler;
+    if (!Array.isArray(list)) {
+      // JSON bozuk/kesik geldiyse tek tek {"id":..,"guven":..} nesnelerini kurtar
+      list = [...raw.matchAll(/"id"\s*:\s*"?([^",}\s]+)"?\s*,\s*"guven"\s*:\s*([0-9.]+)/g)].map((m) => ({ id: m[1], guven: m[2] }));
+    }
+    if (!list.length) {
+      diag('rankByVision_bos', { model, stop: r.stop_reason, cevap: raw.slice(0, 300) });
+      return null; // boş sonuç "eşleşme yok" değil, "karşılaştırılamadı" sayılır
+    }
+    return list
       .map((m) => ({ p: catalog.getProduct(m.id), guven: Number(m.guven) || 0, neden: m.neden }))
       .filter((x) => x.p)
       .sort((a, b) => b.guven - a.guven);
