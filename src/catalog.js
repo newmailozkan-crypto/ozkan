@@ -1,5 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import { cfg } from './config.js';
+import { setImageErrorHook } from './images.js';
 import { getVisual, indexVisuals, visualCount, setVisualListener, visualStatus } from './visualIndex.js';
 import { parsePrice, decodeEntities } from './util.js';
 import { fetchSiteProducts } from './siteCatalog.js';
@@ -334,6 +335,8 @@ export function parseFeed(xml) {
 // ---------- hafıza ----------
 function setProductsInternal(list) {
   products = list;
+  refreshWanted = false;
+  deadImages.clear();
   byId = new Map(list.map((p) => [String(p.id), p]));
   attachVisuals();
 }
@@ -397,6 +400,37 @@ let inflight = null;
 let attempts = []; // son denemelerin kaydı (debug/status için)
 let lastEnsure = 0;
 let pushed = { at: 0, hash: '', count: 0 };
+// Açılmayan (404/410) katalog görselleri: bellekten silinir, ekibe haber verilir, WordPress'ten güncel katalog istenir
+const deadImages = new Map();
+let refreshWanted = false;
+let deadAlertAt = 0;
+const deadPending = [];
+export function reportDeadImage(url, status) {
+  if (status !== 404 && status !== 410) return;
+  if (deadImages.has(url)) return;
+  const owners = [];
+  for (const p of products) {
+    const i = p.images ? p.images.indexOf(url) : -1;
+    if (i >= 0) {
+      p.images.splice(i, 1);
+      owners.push(`${p.title}${p.images.length ? '' : ' (başka görseli kalmadı)'}`);
+    }
+  }
+  if (!owners.length) return; // katalogdaki bir görsel değil (ör. müşteri görseli)
+  deadImages.set(url, Date.now());
+  refreshWanted = true;
+  deadPending.push(...owners);
+  console.warn('[catalog] görsel açılmıyor, bellekten silindi:', status, url);
+  if (Date.now() - deadAlertAt > 30 * 60 * 1000) {
+    deadAlertAt = Date.now();
+    setTimeout(() => {
+      const list = [...new Set(deadPending.splice(0))].slice(0, 12);
+      alert(`🖼 Ürün görseli açılmıyor (404): ${list.join('; ')}\nBot bu görselleri bellekten sildi ve WordPress'ten güncel katalog istiyor. Görsel bağlantısını WooCommerce'te kontrol edin.`);
+    }, 20000).unref?.();
+  }
+}
+setImageErrorHook(reportDeadImage);
+
 let lastJsonAt = 0; // WooCommerce'ten canlı (JSON) veri gelen son an; varken XML push'ları yok sayılır
 let waiters = [];
 const wake = () => { const w = waiters; waiters = []; w.forEach((r) => r()); };
@@ -661,7 +695,8 @@ export function pushJson(text, hash = '') {
 // WordPress her sorguladığında 'hayattayım' sinyali sayılır
 export const pushState = () => {
   lastContact = Date.now();
-  return { hash: pushed.hash, count: pushed.count, at: pushed.at };
+  // Açılmayan görsel bulunduysa farklı bir "hash" bildirilir: WordPress farkı görüp güncel kataloğu yeniden gönderir
+  return { hash: refreshWanted ? 'yenile-' + pushed.hash : pushed.hash, count: pushed.count, at: pushed.at, yenile: refreshWanted };
 };
 
 export const isEmpty = () => products.length === 0;

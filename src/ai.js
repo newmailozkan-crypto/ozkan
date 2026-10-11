@@ -9,7 +9,7 @@ import { sendTelegram, sendTelegramPhoto, formatOrder, formatCancel, notifyHuman
 import * as customers from './customers.js';
 import { create } from './claude.js';
 import { buildAddress } from './address.js';
-import { getImage, getCustomerImage, dhash, hamming } from './images.js';
+import { getImage, getCustomerImage, dhash, hamming, isImageLive } from './images.js';
 import { describeCustomerImage } from './visualIndex.js';
 
 
@@ -867,7 +867,12 @@ async function sendPhotos(session, send, ids, { max = 10 } = {}) {
     }
     const caption = `${p.title} — ${p.price.toLocaleString('tr-TR')} TL`;
     try {
-      await send.image(p.images[0], p.id);
+      let imgUrl = null;
+      for (const u of (p.images || []).slice(0, 4)) {
+        if (await isImageLive(u)) { imgUrl = u; break; } // açılmayan görsel varsa bir sonrakini dene
+      }
+      if (!imgUrl) throw new Error('çalışan ürün görseli yok');
+      await send.image(imgUrl, p.id);
       await send.text(caption, p.id);
       sent.push(p.id);
       session.photoLog.set(p.id, Date.now());

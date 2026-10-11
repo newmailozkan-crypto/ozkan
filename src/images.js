@@ -31,12 +31,41 @@ function guessType(url) {
 }
 
 // Görseli indirir; sharp varsa en uzun kenarı maxSide'a küçültüp JPEG yapar. Claude'a base64 olarak verilir.
+// Katalog görseli silinmiş/taşınmışsa (404/410) haber verilsin diye kayıtlı bir kanca (catalog.js ayarlar)
+let imageErrorHook = null;
+export const setImageErrorHook = (fn) => { imageErrorHook = fn; };
+
+// Görselin hâlâ açılıp açılmadığını hafifçe kontrol eder (HEAD, 6 sn); yalnızca 404/410 "ölü" sayılır. Sonuç 10 dk hatırlanır.
+const liveCache = new Map();
+export async function isImageLive(url) {
+  const hit = liveCache.get(url);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.ok;
+  let ok = true;
+  try {
+    const res = await fetch(url, { method: 'HEAD', headers: { 'User-Agent': 'ig-satis-botu/1.0' }, signal: AbortSignal.timeout(6000) });
+    if (res.status === 404 || res.status === 410) {
+      ok = false;
+      imageErrorHook?.(url, res.status);
+    }
+  } catch {
+    ok = true; // ağ hatasında görseli ölü sayma
+  }
+  liveCache.set(url, { ok, at: Date.now() });
+  if (liveCache.size > 500) liveCache.delete(liveCache.keys().next().value);
+  return ok;
+}
+
 export async function getImage(url, { maxSide = 768, useCache = true, userAgent = 'ig-satis-botu/1.0' } = {}) {
   const key = `${maxSide}|${url}`;
   if (useCache && cache.has(key)) return cache.get(key);
 
   const res = await fetch(url, { headers: { 'User-Agent': userAgent } });
-  if (!res.ok) throw new Error(`Görsel indirilemedi (${res.status}): ${url}`);
+  if (!res.ok) {
+    imageErrorHook?.(url, res.status);
+    const err = new Error(`Görsel indirilemedi (${res.status}): ${url}`);
+    err.status = res.status;
+    throw err;
+  }
   let buf = Buffer.from(await res.arrayBuffer());
   let mediaType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
   if (!mediaType.startsWith('image/')) mediaType = guessType(url);
