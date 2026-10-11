@@ -195,11 +195,11 @@ function staticPrompt() {
    • Mahalle, cadde/sokak, kapı no, daire no
    • İl, ilçe"
    Eksik gelirse yalnızca eksiği sor. Adreste MAHALLE, CADDE/SOKAK, KAPI NO zorunlu; apartmansa DAİRE NO da zorunlu (kapı no verip daire no vermezse daireyi sor). Müşteri "iş yeri/müstakil/dükkan" derse daire sorma, daire_yok=true ile sorunsuz devam et. Müşteri iş yeri adı gibi bilinen bir yer söylerse adres_notu olarak ekle (adresin sonuna parantezle yazılır).
-5. Bilgiler tamamlanınca: kampanya adım 2b'de ZATEN sunulduysa tekrar sunma, doğrudan adım 6'ya geç (müşteri 2. ürün seçtiyse calc_cart yap). Sunulmadıysa UPSELL (iki adım): hemen siparişi bitirme.
+5. Sepette ZATEN 2 veya daha fazla ürün varsa müşteri kampanyadan yararlanıyor demektir: ASLA "bir ürün daha eklemek ister misiniz / kampanyamız var" deme, kampanyayı tekrar sunma. Doğrudan özet yaz, müşteri "onaylıyorum/evet" deyince HEMEN submit_order çağır (tekrar onay isteme, tek onay yeter). Bilgiler tamamlanınca: kampanya adım 2b'de ZATEN sunulduysa tekrar sunma, doğrudan adım 6'ya geç (müşteri 2. ürün seçtiyse calc_cart yap). Sunulmadıysa UPSELL (iki adım): hemen siparişi bitirme.
    a) Önce offer_campaign çağır ve FOTOĞRAFSIZ, kısa şunu sor: "Siparişiniz hazır 😊 Kampanyamız var: 2. ürün sadece ${cfg.campaignPrice} TL! 🎁 İkinci bir ürün alırsanız sepetinizdeki en uygun fiyatlı ürün ${cfg.campaignPrice} TL olur (aynı siparişte). Bir ürün daha eklemek ister misiniz?" Cevabı BEKLE (sistem, cevap gelmeden siparişi engeller).
    b) Müşteri "evet/olur/bir tane daha alabilirim" derse suggest_upsell çağır (müşterinin numarasında stokta olan, tarzına uygun 4-5 model fotoğraflı gider) ve "Hangisini beğendiniz?" diye sor. Beğenmezse suggest_upsell'i tekrar çağır (daha önce gösterilenler otomatik hariç tutulur, 4-5 yeni model). İstemezse ısrar etme, sipariş özetine geç.
    Ekleme olursa calc_cart; tek sayıdaysa bir sonraki çifte (3→4, 5→6), sepet ${cfg.freeShippingMin.toLocaleString('tr-TR')} TL altındaysa ücretsiz kargo için ek ürüne teşvik et (calc_cart ipuçları). Hangi ürünün ${cfg.campaignPrice} TL olduğunu calc_cart sonucuna göre söyle (en ucuz ürün).
-6. Kısa sipariş özeti (ürün, numara, indirim, kargo, ödenecek toplam, adres, kapıda ödeme) yaz, onay al, submit_order çağır (bir sipariş için bir kez).
+6. Kısa sipariş özeti (ürün, numara, indirim, kargo, ödenecek toplam, adres, kapıda ödeme) yaz ve TEK KEZ onay iste. Müşteri onay verince (evet/onaylıyorum/tamam/olur) aynı turda HEMEN submit_order çağır; ikinci kez onay isteme, özeti tekrarlama, kampanya/ek ürün teklifi yapma (bir sipariş için bir kez submit_order).
 7. Sipariş alınınca: teşekkür, 24 saatte paketlenip SMS ile bilgi verileceği, kapıda ödeme + şeffaf kargo, ürünü teslim alınca memnuniyet fotoğrafı beklediğimiz (📸). Hepsi 3-4 kısa cümlede.
 - Kampanya (2. ürün ${cfg.campaignPrice} TL) yalnızca TEK siparişte birlikte alınan ürünlere uygulanır. Eski "2'li alımda 300 TL, 4'lü alımda 600 TL indirim" kampanyası İPTAL edildi, asla bahsetme. Müşteri ayrı ayrı sipariş verirse kampanya birleşmez; kampanya için ürünlerin aynı siparişte olması gerektiğini söyle (önceki sipariş 3 saat içindeyse isterse iptal edip hepsini tek siparişte toplayabileceğini belirt).
 
@@ -702,6 +702,9 @@ function normalizePhone(p) {
 
 async function submitOrder(session, userId, a) {
   // Üst satış kapısı: önce suggest_upsell yapılmış ve müşteri ona cevap yazmış olmalı
+  const qtyTotal = (a.items || []).reduce((n, it) => n + (Number(it.qty) || 1), 0);
+  // Sepette zaten 2+ ürün varsa kampanyadan yararlanılıyor: tekrar teklif edilmez, sipariş doğrudan tamamlanır
+  if (qtyTotal >= 2) session.upsellSkip = true;
   if (!session.upsellSkip && (session.upsellTurn === undefined || session.turn <= session.upsellTurn)) {
     return {
       ok: false,
