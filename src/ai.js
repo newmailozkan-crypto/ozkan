@@ -496,6 +496,28 @@ async function identifyImage(session, hint) {
       }
     }
   }
+  // 3. aşama: model bulundu ama AYNI modelin birden çok rengi var -> doğru RENGİ ayrıca, güçlü modelle ve çok görselle seçtir
+  try {
+    const t = ranked[0];
+    const fam = t ? catalog.familyOf(t.p).filter((x) => x.images.length).slice(0, 8) : [];
+    if (t && t.guven >= 0.4 && fam.length > 1) {
+      const fr = await rankByVision(
+        session,
+        fam,
+        'Bu adaylar AYNI modelin FARKLI RENKLERİ. Müşterinin görselindeki ayakkabının RENK KOMBİNASYONUNA (hangi parça hangi renk: beyaz/lacivert/gri/bej/siyah/kahve vb. panel, taban, logo, bağcık renkleri) BİREBİR uyan rengi yüksek, diğer renkleri belirgin şekilde düşük puanla. Genel tonu değil, renk adlarını ayırt et.',
+        { model: cfg.visionStrongModel || cfg.visionModel, perCand: 3, max: 8, maxSide: 448, tag: 'renk_dogrulama' }
+      );
+      if (fr?.length) {
+        const top = fr[0].guven || 1;
+        const scaled = fr.map((x) => ({ ...x, guven: Number((t.guven * Math.min(1, x.guven / top)).toFixed(3)), renkSkoru: x.guven }));
+        const ids = new Set(scaled.map((x) => x.p.id));
+        ranked = [...scaled, ...ranked.filter((r) => !ids.has(r.p.id))].sort((x, y) => y.guven - x.guven);
+        diag('renk_secimi', { model: t.p.modelName || t.p.title, renkler: scaled.slice(0, 4).map((x) => ({ renk: x.p.color, skor: x.renkSkoru, neden: x.neden })) });
+      }
+    }
+  } catch (e) {
+    diag('renk_dogrulama_hata', { hata: String(e.message).slice(0, 200) });
+  }
   diag('identify_sonuc', { en_iyi: ranked.slice(0, 3).map((r) => ({ id: r.p.id, baslik: r.p.title, guven: r.guven, neden: r.neden })) });
   return { desc, ranked };
 }
@@ -551,7 +573,11 @@ async function matchImage(session, size, hint, send) {
   // Güven orta düzeyde olsa bile diğer modellerden net öndeyse (en az 0.10 fark) en iyi aday kabul edilir; müşteriye teyit ettirilir
   const clearLead = best && best.guven >= 0.3 && (!rival || best.guven - rival.guven >= 0.1);
   const found = best && (best.guven >= 0.45 || clearLead) ? best : null;
-  const emin = found && found.guven < 0.7 ? ' Eşleşme kesin değil: "Aradığınız model bu mu efendim?" diye kısaca teyit et ve aynı mesajda numarasını sor.' : '';
+  const sameModelNext = found ? ranked.find((r) => r.p.id !== found.p.id && r.p.modelKey === found.p.modelKey) : null;
+  const renkBelirsiz = !!(found && sameModelNext && found.renkSkoru !== undefined && found.guven - sameModelNext.guven < 0.08);
+  const renkNotu = found ? ` Eşleşen rengi ADIYLA söyle: "${found.p.color || found.p.title}".` + (renkBelirsiz ? ` Renk emin değil (${sameModelNext.p.color} ile karışıyor): "Beyaz lacivert mi yoksa ${sameModelNext.p.color} mı?" gibi iki rengi sorarak teyit et; renk teyit edilmeden sipariş açma.` : '') : '';
+  const emin0 = found && found.guven < 0.7 ? ' Eşleşme kesin değil: "Aradığınız model bu mu efendim?" diye kısaca teyit et ve aynı mesajda numarasını sor.' : '';
+  const emin = emin0 + renkNotu;
   const out = { tanim: desc || undefined, aranan_beden: size || null };
 
   if (id.own) {
