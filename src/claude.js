@@ -5,7 +5,7 @@ import { cfg } from './config.js';
 import { sendTelegram } from './telegram.js';
 
 // Tüm Claude çağrıları buradan geçer: kullanım/harcama sayılır, günlük uyarı/limit uygulanır, bakiye bitince haber verilir.
-export const client = new Anthropic({ apiKey: cfg.anthropicKey });
+export const client = new Anthropic({ apiKey: cfg.anthropicKey, timeout: 60000, maxRetries: 2 }); // en çok ~3 dk; sonsuza dek takılmasın
 
 // 1 milyon token başına TAHMİNİ fiyat (USD): [girdi, çıktı, önbellek yazma, önbellek okuma]. Gerçek fiyat için Anthropic Console'a bakın.
 const PRICES = [

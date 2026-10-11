@@ -11,6 +11,7 @@ async function call(path, body, method = 'POST') {
       'Content-Type': 'application/json',
     },
     body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(30000), // takılan istek sırayı kilitlemesin
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -47,6 +48,8 @@ function chunkText(text, max = 900) {
 // Botun kendi gönderdiği mesajları (yankı/echo olaylarında) insan mesajından ayırmak için son gönderilenleri tutar
 const sentLog = [];
 const norm = (t) => String(t || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+// Instagram yankıda biçimi değiştirebilir (kalın **, emoji, satır sonu): yalnızca harf/rakamlara bakarak karşılaştır
+const loose = (t) => String(t || '').toLocaleLowerCase('tr').replace(/[^\p{L}\p{N}]+/gu, '').slice(0, 60);
 function noteSent(recipientId, text, mid) {
   sentLog.push({ to: String(recipientId), text: norm(text), mid, at: Date.now() });
   if (sentLog.length > 300) sentLog.shift();
@@ -58,8 +61,13 @@ export function isOurMessage(recipientId, mid, text, hasAttachment) {
     if (now - e.at > 10 * 60 * 1000) return false;
     if (mid && e.mid === mid) return true;
     if (e.to !== '*' && e.to !== String(recipientId)) return false;
-    if (nt) return e.text && (e.text === nt || e.text.startsWith(nt) || nt.startsWith(e.text));
-    return hasAttachment && !e.text && now - e.at < 90 * 1000; // görsel yankısı
+    if (nt) {
+      if (e.text && (e.text === nt || e.text.startsWith(nt) || nt.startsWith(e.text))) return true;
+      const a = loose(e.text), b = loose(nt);
+      const n = Math.min(a.length, b.length, 25);
+      return n >= 8 && a.slice(0, n) === b.slice(0, n); // biçim farkı olsa da aynı mesaj
+    }
+    return hasAttachment && now - e.at < 3 * 60 * 1000; // görsel yankısı: son 3 dk içinde bu müşteriye bot bir şey gönderdiyse botun fotoğrafıdır
   });
 }
 

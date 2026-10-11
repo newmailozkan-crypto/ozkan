@@ -147,6 +147,7 @@ function handleEcho(event) {
   t.unref?.();
 }
 
+const handoffAlert = new Map();
 async function processMessage(event) {
   const senderId = event.sender?.id;
   if (event.read && senderId) {
@@ -183,6 +184,10 @@ async function processMessage(event) {
   if (humanActive(String(senderId), cfg.handoffHours)) {
     observeCustomer(String(senderId), msg.text || (image ? '[müşteri görsel gönderdi]' : '[müşteri bir paylaşım iletti]'));
     recordEvent('izleme', { kimden: senderId, metin: String(msg.text || '').slice(0, 80) });
+    if (Date.now() - (handoffAlert.get(String(senderId)) || 0) > 30 * 60 * 1000) {
+      handoffAlert.set(String(senderId), Date.now());
+      sendTelegram(`👀 Müşteri yazdı ama bot sessiz (mağaza yetkilisi bu müşteriyle yazıştı sayılıyor, ${cfg.handoffHours} saat).\nMüşteri: ${senderId}\nMesaj: ${String(msg.text || '(görsel/paylaşım)').slice(0, 150)}\nBu müşteriye siz cevap vermediyseniz bot yanlışlıkla susmuş olabilir.`).catch(() => {});
+    }
     return;
   }
   ig.typingOn(senderId);
@@ -204,7 +209,35 @@ async function processBatch(senderId, items) {
       noteBotMessage(senderId);
     },
   };
+  const watchdog = new Promise((_, rej) => { const t = setTimeout(() => rej(new Error('işlem 150 sn içinde bitmedi (zaman aşımı)')), 150000); t.unref?.(); });
   try {
+    await Promise.race([watchdog, processBatchInner(senderId, items, send)]);
+  } catch (e) {
+    return onBatchError(senderId, e);
+  }
+}
+
+async function onBatchError(senderId, e) {
+  {
+    console.error('[dm] hata:', e);
+    try {
+      await ig.sendText(senderId, FALLBACK);
+    } catch {
+      /* gönderilemedi */
+    }
+    if (Date.now() - lastBotErrorAlert > 10 * 60 * 1000) {
+      lastBotErrorAlert = Date.now();
+      try {
+        await sendTelegram(`⚠️ İNSAN DESTEĞİ GEREKİYOR: bot bir müşteriye cevap veremedi (@${senderId}).\nMüşteriye WhatsApp hattı gönderildi. Hata: ${String(e.message).slice(0, 200)}\nRender Logs'ta "[dm] hata" satırına bakın.`);
+      } catch {
+        /* yoksay */
+      }
+    }
+  }
+}
+
+async function processBatchInner(senderId, items, send) {
+  {
     const prof = await ig.getProfile(senderId);
     setUsername(senderId, prof.username);
 
@@ -264,22 +297,6 @@ async function processBatch(senderId, items) {
       const ids = await ig.sendText(senderId, reply);
       rememberSent(ids, { text: reply });
       noteBotMessage(senderId);
-    }
-  } catch (e) {
-    console.error('[dm] hata:', e);
-    try {
-      await ig.sendText(senderId, FALLBACK);
-    } catch {
-      /* gönderilemedi */
-    }
-    // Bot cevap veremediyse ekibe haber ver (10 dakikada en fazla bir kez, kesinti anında grubu doldurmamak için)
-    if (Date.now() - lastBotErrorAlert > 10 * 60 * 1000) {
-      lastBotErrorAlert = Date.now();
-      try {
-        await sendTelegram(`⚠️ İNSAN DESTEĞİ GEREKİYOR: bot bir müşteriye cevap veremedi (@${senderId}).\nMüşteriye WhatsApp hattı gönderildi. Hata: ${String(e.message).slice(0, 200)}\nRender Logs'ta "[dm] hata" satırına bakın.`);
-      } catch {
-        /* yoksay */
-      }
     }
   }
 }
