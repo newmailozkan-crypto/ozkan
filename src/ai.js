@@ -386,6 +386,13 @@ const textOf = (resp) => resp.content.filter((b) => b.type === 'text').map((b) =
 const imgBlock = (s) => ({ type: 'image', source: { type: 'base64', media_type: s.lastImage.mediaType, data: s.lastImage.b64 } });
 
 const MAX_CANDS = 10;
+// Son görsel tanıma kayıtları (/debug/identify): neden eşleşmedi görmek için
+export const identifyLog = [];
+function diag(kind, info) {
+  identifyLog.push({ at: new Date().toISOString(), kind, ...info });
+  if (identifyLog.length > 60) identifyLog.shift();
+  console.log('[identify]', kind, JSON.stringify(info).slice(0, 400));
+}
 const MATCH_RULE = 'Müşterinin görselindeki ayakkabıyla AYNI modeli arıyoruz. Marka/logo (Nike tik, New Balance N, 3 şerit, Puma figürü vb.), taban yapısı ve kalınlığı, ayakkabının silueti, panel/dikiş düzeni ve renk blokları gibi AYIRT EDİCİ detaylara bak; sadece genel renge göre eşleştirme. Birebir aynı ürüne yüksek (0.85+), aynı modelin başka rengine orta (0.5-0.7), yalnızca benzer tarza düşük (0.3 altı) puan ver. Emin değilsen yüksek puan verme.'; // tek seferde görsel olarak karşılaştırılacak en fazla ürün
 
 // Müşteri görseli ile aday ürün görsellerini tek çağrıda karşılaştırır; her adaya 0-1 benzerlik puanı verir (yüksekten düşüğe)
@@ -409,7 +416,7 @@ async function rankByVision(session, cands, instruction, opts = {}) {
       })
     );
     const ok = loaded.filter(Boolean);
-    if (!ok.length) return null;
+    if (!ok.length) { diag('aday_gorselleri_indirilemedi', { adet: withImg.length }); return null; }
     const content = [{ type: 'text', text: 'MÜŞTERİNİN GÖRSELİ:' }, imgBlock(session), { type: 'text', text: 'ADAY ÜRÜNLER:' }];
     for (const { c, imgs } of ok) {
       content.push({ type: 'text', text: `Aday id=${c.id} | ${c.title} | model: ${c.modelName || '-'} | renk: ${c.color || '-'}` });
@@ -427,6 +434,7 @@ async function rankByVision(session, cands, instruction, opts = {}) {
       .sort((a, b) => b.guven - a.guven);
   } catch (e) {
     console.error('[rankByVision] başarısız:', e.message);
+    diag('rankByVision_hata', { hata: String(e.message).slice(0, 200), model });
     return null; // çağıran fallback uygular
   }
 }
@@ -446,7 +454,10 @@ async function identifyImage(session, hint) {
     } catch (e) {
       console.error('[identify] görsel tanımlanamadı:', e.message);
     }
-    cands = catalog.shortlistByVisual(desc, hint, MAX_CANDS * 2);
+    // Görsel hafıza eksikse (yeniden başlatma sonrası) daha geniş aday listesi kullanılır: tanıma hafızaya bağımlı kalmaz
+    const cov = catalog.visualCoverage();
+    cands = catalog.shortlistByVisual(desc, hint, cov >= 0.9 ? MAX_CANDS * 2 : MAX_CANDS * 5);
+    diag('identify_adaylar', { kapsam: Number(cov.toFixed(2)), aday: cands.length, tanim: desc?.ozet || null });
   }
   // 1. aşama: hızlı model, adayları 10'arlı gruplar halinde puanlar (20 aday)
   const groups = [];
@@ -476,6 +487,7 @@ async function identifyImage(session, hint) {
       }
     }
   }
+  diag('identify_sonuc', { en_iyi: ranked.slice(0, 3).map((r) => ({ id: r.p.id, baslik: r.p.title, guven: r.guven, neden: r.neden })) });
   return { desc, ranked };
 }
 

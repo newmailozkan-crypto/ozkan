@@ -5,7 +5,7 @@ import * as ig from './src/instagram.js';
 import { usageReport } from './src/claude.js';
 import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
-import { handleDirectMessage, handleComment, warmProductHashes, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup, humanMessage, observeCustomer, humanActive, hasSession } from './src/ai.js';
+import { handleDirectMessage, handleComment, warmProductHashes, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup, humanMessage, observeCustomer, humanActive, hasSession, identifyLog } from './src/ai.js';
 import { sendTelegram } from './src/telegram.js';
 import { resolveShared, isMediaAttachment } from './src/media.js';
 import { createBatcher } from './src/batch.js';
@@ -74,6 +74,7 @@ function recordEvent(kind, info) {
   if (events.length > 40) events.shift();
 }
 app.get('/debug/events', (req, res) => debugAuth(req, res) && res.json({ son_olaylar: [...events].reverse() }));
+app.get('/debug/identify', (req, res) => debugAuth(req, res) && res.json({ kayitlar: [...identifyLog].reverse() }));
 app.get('/debug/families', (req, res) => debugAuth(req, res) && res.json(debugFamilies()));
 
 // Instagram'ın alabilmesi için katalogdaki webp görselleri JPEG olarak sunar (yalnızca katalogda kayıtlı görseller)

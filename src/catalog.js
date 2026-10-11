@@ -1,6 +1,6 @@
 import { XMLParser } from 'fast-xml-parser';
 import { cfg } from './config.js';
-import { getVisual, indexVisuals, visualCount } from './visualIndex.js';
+import { getVisual, indexVisuals, visualCount, setVisualListener, visualStatus } from './visualIndex.js';
 import { parsePrice, decodeEntities } from './util.js';
 import { fetchSiteProducts } from './siteCatalog.js';
 import { httpGet } from './http.js';
@@ -341,6 +341,13 @@ function setProductsInternal(list) {
 const VISUAL_PER_PRODUCT = 3;
 const visualUrls = (list) => list.flatMap((p) => (p.images || []).slice(0, VISUAL_PER_PRODUCT));
 
+export function visualCoverage() {
+  const withImg = products.filter((p) => p.images?.length);
+  if (!withImg.length) return 1;
+  return withImg.filter((p) => p.visual).length / withImg.length;
+}
+export { visualStatus };
+
 function attachVisuals() {
   for (const p of products) {
     // ürünün ilk 3 fotoğrafı da görsel hafızaya alınır (farklı pozlar); p.visual ana görselin tanımı
@@ -349,6 +356,8 @@ function attachVisuals() {
     p.visualText = [...new Set(p.visuals.map((v) => v.text))].join(' ') || p.visual?.text || '';
   }
 }
+
+setVisualListener(() => attachVisuals());
 
 // Siteden gelen düz ürünleri bellekteki ürün biçimine çevirir (renk bazında, bedenleri içinde)
 export function fromSite(list) {
@@ -718,7 +727,7 @@ export function startCatalogRefresh() {
 }
 
 export function catalogStatus() {
-  return { source: lastSource, count: products.length, models: new Set(products.map((p) => p.modelKey)).size, visualIndexed: visualCount(), lastUpdated, lastError };
+  return { source: lastSource, count: products.length, models: new Set(products.map((p) => p.modelKey)).size, visualIndexed: visualCount(), visualCoverage: Number(visualCoverage().toFixed(2)), visualJob: visualStatus(), lastUpdated, lastError };
 }
 
 // Test amaçlı: listeyi doğrudan yükle
