@@ -140,7 +140,7 @@ export async function listOwnMedia() {
   for (const edge of ['media', 'stories']) {
     try {
       let path = `/me/${edge}?fields=${fields}&limit=50`;
-      for (let i = 0; i < 3 && path; i++) {
+      for (let i = 0; i < 8 && path; i++) {
         const r = await call(path, null, 'GET');
         items.push(...(r.data || []));
         const next = r.paging?.next;

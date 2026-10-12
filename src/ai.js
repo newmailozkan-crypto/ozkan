@@ -160,6 +160,7 @@ function staticPrompt() {
 - CEVAP VERMEDEN ÖNCE "KONUŞMA HAFIZASI" bölümünü ve sohbeti BAŞTAN SONA oku, sohbetin akışına göre devam et. Müşterinin daha önce söylediğini (model, numara, renk, adres, sorduğu ürünler) tekrar sorma. Önceki mesajını görmezden gelme; müşteri bir şey sorduysa önce onu cevapla.
 - ÜRÜN SORULUNCA: sadece ürünün olup olmadığını ve fiyatını (fiyat_tl) söyle. Fiyat yazdığın HER mesajda aynı mesajda mutlaka şunu da yaz: "2. ürün sadece ${cfg.campaignPrice} TL 🎁 İkinci ürünü dilediğiniz modelden seçebilirsiniz." (sipariş özetinde tekrar yazma). Ardından tek kısa soru (numara?).
 - ANLAŞILMAZSA: müşterinin ne demek istediğini anlamazsan "anlamadım" DEME; en güçlü tahminini kısa soruyla teyit et: "X modeli mi demek istediniz efendim?" / "... mı kastediyorsunuz?". Tek soru sor.
+- ASLA "özür dilerim", "görseli açamadım", "net gelmedi" deme. Sohbet sürüyorsa tekrar "Merhaba!" diye selam verme; doğrudan konuya gir. Müşteri art arda birden çok ürün/gönderi attıysa her birini ayrı ayrı, sırayla cevapla.
 - Mesaj sonunda satışı ilerleten TEK kısa soru/adım. Ölçülü emoji (😊).
 - "BU MÜŞTERİ HAKKINDA BİLDİKLERİMİZ" bölümü ve sohbetteki "[Mağaza yetkilisi (insan) ... yazdı]" satırları varsa onlarla çelişme, kaldığı yerden sürdür.
 
@@ -1222,6 +1223,17 @@ async function createSafe(session, params, tag) {
 // Fiyat söylenen HER mesajda "2. ürün 599 TL, dilediğiniz modelden seçebilirsiniz" bilgisi mutlaka bulunur (sipariş özeti/adres isteme mesajlarında eklenmez)
 const PRICE_IN_TEXT = /\d[\d.]*\s*(tl|₺|lira)/i;
 const SKIP_CAMPAIGN = /sipariş(iniz)?\s*özet|ödenecek\s*toplam|isim soyisim|mahalle|kapı no|iptal|ücretsiz kargo baremimiz|whatsapp/i;
+// Müşteriye giden metinden özür/"görseli açamadım" cümlelerini ve sürmekte olan sohbette tekrar selamı temizler
+const APOLOGY = /özür dilerim|görsel(?:ler)?(?:i|in)?\s*(?:açamadım|göremedim|açılamadı|yüklenmedi|indiremedim)|açamadım|net gelmedi|netleştirmek için biraz bilgi/i;
+export function cleanReply(out, hasHistory) {
+  let t = String(out || '').trim();
+  const sentences = t.split(/(?<=[.!?])\s+|\n+/).filter(Boolean);
+  const kept = sentences.filter((x) => !APOLOGY.test(x));
+  if (kept.length !== sentences.length) t = kept.join(' ').trim() || 'Hangi modeli kastettiğinizi yazar mısınız efendim? 😊';
+  if (hasHistory) t = t.replace(/^(?:merhaba|selam|iyi günler)[!,.\s]*(?:👋|😊)?\s*/i, '').trim() || t;
+  return t;
+}
+
 export function ensureCampaignLine(out) {
   const t = String(out || '');
   if (!PRICE_IN_TEXT.test(t) || SKIP_CAMPAIGN.test(t)) return t;
@@ -1288,6 +1300,7 @@ async function agentLoop({ session, userId, send, tools }) {
         }
       }
       if (cfg.whatsappUrl && /whatsapp|canlı\s*(müşteri\s*)?(destek|temsilci)/i.test(out) && !out.includes(cfg.whatsappUrl)) out = `${out.trim()}\n${cfg.whatsappUrl}`; // WhatsApp'a yönlendirirken bağlantı mutlaka olsun
+      out = cleanReply(out, session.messages.length > 2 || (convlog.get(userId)?.msgs.length || 0) > 2);
       out = ensureCampaignLine(out);
       if (session.messages[session.messages.length - 1]?.role === 'assistant') session.messages[session.messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: out }] };
       return out;

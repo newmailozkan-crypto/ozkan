@@ -252,6 +252,25 @@ function resolveReplyFromHistory(history, rmid) {
 
 const lastResolved = new Map(); // müşteri -> paylaşım görseli en son ne zaman çözüldü
 
+// Mesajları "medya + ardından gelen yazı" gruplarına böler (2 veya daha fazla medya varsa); tek medya/yazıdan ibaretse olduğu gibi bırakır
+function splitSegments(items) {
+  const flat = [];
+  for (const it of items) {
+    if (!it.image && (it.sharedAtts || []).length > 1) for (const a of it.sharedAtts) flat.push({ ...it, sharedAtts: [a] });
+    else flat.push(it);
+  }
+  const isMedia = (it) => Boolean(it.image || (it.sharedAtts || []).length || it.story);
+  if (flat.filter(isMedia).length < 2) return [items];
+  const segs = [];
+  let lead = [];
+  for (const it of flat) {
+    if (isMedia(it)) segs.push([...lead, it]), (lead = []);
+    else if (segs.length) segs[segs.length - 1].push(it);
+    else lead.push(it);
+  }
+  return segs;
+}
+
 async function processBatch(senderId, items) {
   // Mesajlar toplanırken yetkili yazmaya başladıysa bot susar, bekletir
   if (humanActive(String(senderId), cfg.handoffHours)) return deferItems(String(senderId), items);
@@ -271,7 +290,8 @@ async function processBatch(senderId, items) {
   let slow = false;
   const timer = setTimeout(() => { slow = true; onBatchError(senderId, new Error('işlem 150 sn içinde bitmedi (zaman aşımı)')); }, 150000);
   try {
-    await processBatchInner(senderId, items, send);
+    // Müşteri art arda birden çok gönderi/fotoğraf attıysa her biri kendi yazısıyla AYRI ve sırayla cevaplanır
+    for (const seg of splitSegments(items)) await processBatchInner(senderId, seg, send);
   } catch (e) {
     if (!slow) await onBatchError(senderId, e);
     else console.error('[dm] geç hata:', e);
