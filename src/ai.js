@@ -1429,20 +1429,20 @@ async function identifyPostProducts(mediaId, imageUrl, caption) {
 
 const PRICE_Q = /fiyat|fıyat|fyat|fiat|fiyad|fıat|kaç\s*(tl|lira|para|₺)|kaça|ne\s*kadar|ücret|ucret|kac\s*(tl|para)|\bkaç\b|\bkac\b|\bfyt\b|\bfiyatı\b/i;
 const fmtTl = (n) => Number(n).toLocaleString('tr-TR');
-// Fiyat sorulduysa ve cevapta ürün fiyatı yoksa, doğru fiyatlı şablonla değiştirir
+// Fiyat sorulduysa herkese açık cevap: ürün ADI YOK, sadece fiyat + "2. ürün 599 TL" + DM daveti
+const dmLine = 'Yardımcı olmamız için bize DM\'den yazabilirsiniz 📩';
+const campLine = () => `2. ürün sadece ${cfg.campaignPrice} TL 🎁 Dilediğiniz modelden seçebilirsiniz.`;
 export function enforceCommentPrice(reply, commentText, items) {
   const r = String(reply || '').trim();
   if (!PRICE_Q.test(commentText || '')) return r;
-  const known = (items || []).filter((i) => i.fiyat_tl > 0);
-  const digits = r.replace(/[.\s]/g, '');
-  if (known.length) {
-    if (known.every((i) => digits.includes(String(Math.round(i.fiyat_tl))))) return r;
-    const short = (t) => String(t).replace(/\s+/g, ' ').slice(0, 40);
-    const body = known.length === 1 ? `${short(known[0].baslik)} ${fmtTl(known[0].fiyat_tl)} TL 🎉` : known.map((i) => `${short(i.baslik)}: ${fmtTl(i.fiyat_tl)} TL`).join(' | ') + ' 🎉';
-    return `❤️ ${body} Detaylı bilgi ve sipariş için bize DM'den yazabilirsiniz 📩`;
-  }
-  if (/\d[\d.]*\s*(tl|₺)/i.test(r) && !/arası|ile .* arası|-\s*\d/i.test(r)) return r;
-  return `❤️ Hangi model için fiyat öğrenmek istediğinizi DM'den iletirseniz hemen net fiyatı verelim 📩`;
+  const prices = [...new Set((items || []).map((i) => Math.round(i.fiyat_tl)).filter((n) => n > 0))];
+  if (prices.length === 1) return `❤️ ${fmtTl(prices[0])} TL 🎉 ${campLine()} ${dmLine}`;
+  const hasPrice = /\d[\d.]*\s*(tl|₺)/i.test(r) && !/arası|ile .* arası|-\s*\d/i.test(r);
+  if (!hasPrice) return `❤️ Hangi model için fiyat öğrenmek istediğinizi DM'den iletirseniz hemen net fiyatı verelim 📩 ${campLine()}`;
+  let out = r;
+  if (!new RegExp(`${cfg.campaignPrice}\\s*(tl|₺)`, 'i').test(out)) out += ` ${campLine()}`;
+  if (!/\bDM\b/i.test(out)) out += ` ${dmLine}`;
+  return out;
 }
 
 export async function handleComment({ userId, username, commentText, mediaCaption, mediaId, mediaImageUrl }) {
@@ -1456,7 +1456,7 @@ export async function handleComment({ userId, username, commentText, mediaCaptio
 ${mediaCaption ? `Yorum yapılan gönderinin açıklaması: "${mediaCaption.slice(0, 500)}" (hangi ürün/model olduğunu buradan ve search_products ile anlayabilirsin)\n` : ''}${postItems.length ? `Gönderideki ürün(ler) (görselden katalogla eşleşti, güncel fiyatlarıyla): ${JSON.stringify(postItems)}\n` : ''}
 Görevin: yorum için iki çıktı üret. Yalnızca JSON döndür:
 {"public_reply":"...", "dm":"..."}
-- public_reply: herkese açık, 1-3 kısa cümle, sıcak ve satışa yönlendiren. Yorumdaki soruyu kısaca cevapla. Yazım hatalarını (fiat/fyat/fıyat = fiyat vb.) sessizce anla; yazım hakkında asla yorum yapma, espri yapma, doğrudan ve kibarca cevap ver. FİYAT SORULURSA: sorulan modelin NET fiyatını yaz (ör. "Tazz Bej 1.199 TL 🎉"). Modeli yukarıdaki gönderi ürünlerinden, yorumdan veya search_products sonucundan belirle; fiyatı yalnızca araç/ürün bilgisindeki fiyat_tl'den al. ASLA fiyat aralığı ("X ile Y TL arası") veya genel ürün fiyatları verme. Gönderide birden çok ürün varsa her birinin adı ve net fiyatını yaz. Modeli gerçekten belirleyemezsen aralık verme: "Hangi model için fiyat öğrenmek istediğinizi DM'den iletirseniz hemen net fiyat verelim" de. Stok/numara gibi kesin bilgiyi önce araçla doğrula. Mutlaka şunu ekle: daha detaylı destek ve sipariş için bize DM atmalarını rica et (örn. "Detaylı bilgi ve sipariş için bize DM'den yazabilirsiniz 📩"). Başlangıç/bitişte ❤️ gibi bir emoji kullan.
+- public_reply: herkese açık, 1-3 kısa cümle, sıcak ve satışa yönlendiren. Yorumdaki soruyu kısaca cevapla. Yazım hatalarını (fiat/fyat/fıyat = fiyat vb.) sessizce anla; yazım hakkında asla yorum yapma, espri yapma, doğrudan ve kibarca cevap ver. FİYAT SORULURSA: ürün ADINI YAZMA; sadece sorulan ürünün NET fiyatını yaz, ardından "2. ürün sadece ${cfg.campaignPrice} TL 🎁 Dilediğiniz modelden seçebilirsiniz." ve en sonda yardımcı olmamız için DM atmalarını iste. Örnek: "❤️ 1.199 TL 🎉 2. ürün sadece ${cfg.campaignPrice} TL 🎁 Dilediğiniz modelden seçebilirsiniz. Yardımcı olmamız için bize DM'den yazabilirsiniz 📩". Modeli yukarıdaki gönderi ürünlerinden, yorumdan veya search_products sonucundan belirle; fiyatı yalnızca araç/ürün bilgisindeki fiyat_tl'den al. ASLA fiyat aralığı veya genel ürün fiyatları verme. Modeli gerçekten belirleyemezsen (örn. gönderide farklı fiyatlı birden çok ürün var) aralık verme: "Hangi model için fiyat öğrenmek istediğinizi DM'den iletirseniz hemen net fiyat verelim" de. Başlangıç/bitişte ❤️ gibi bir emoji kullan.
 - dm: yoruma özel mesaj (yoruma cevap + araçla doğrulanmış ürün/fiyat bilgisi + numara/beden sorusuyla bitir). 600 karakteri geçmesin, görsel gönderemezsin.
 - Yorum sadece emoji/övgü/etiketleme ise: public_reply kısa içten teşekkür (+ DM daveti), dm boş string "" olsun.
 - Yorum küfür/spam/reklam ise ikisini de boş string yap.`;
