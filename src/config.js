@@ -1,4 +1,8 @@
+import fs from 'node:fs';
+
 const env = process.env;
+// Render'da kalıcı disk eklenip /var/data'ya bağlanırsa tüm veri dosyaları otomatik oraya yazılır (ortam değişkeni gerekmez)
+export const dataDir = env.DATA_DIR || (fs.existsSync('/var/data') ? '/var/data' : 'data');
 
 export const cfg = {
   port: Number(env.PORT || 3000),
@@ -36,7 +40,7 @@ export const cfg = {
   // WordPress'ten ürün XML'ini sunucuya iten uç nokta için gizli anahtar (boşsa uç nokta kapalı)
   pushKey: env.CATALOG_PUSH_KEY || '',
   // WordPress'ten gelen son veri buraya yazılır; bot yeniden başlarsa buradan okur. Kalıcı disk bağlıysa yolu oraya verin (örn. /var/data/last-push.xml)
-  storeFile: env.CATALOG_STORE_FILE || 'data/last-push.dat',
+  storeFile: env.CATALOG_STORE_FILE || `${dataDir}/last-push.dat`,
   // Katalog boşken (ör. uyku sonrası) mesajlar bu kadar dakika boyunca WordPress'ten veri beklenir; gelmezse ekibe yönlendirilir
   catalogWaitMin: Number(env.CATALOG_WAIT_MIN || 12),
   fallbackFile: env.CATALOG_FALLBACK_FILE || 'data/feed.xml',
@@ -56,14 +60,14 @@ export const cfg = {
   // Müşteri son mesajımızı gördüyse ve bu kadar saat cevap yazmadıysa tek seferlik hatırlatma gönderilir (0 = kapalı)
   // Sipariş sonrası bu süre içinde müşteri iptal isterse bot doğrudan iptal eder (saat)
   cancelWindowHours: Number(env.CANCEL_WINDOW_HOURS || 3),
-  customersFile: env.CUSTOMERS_FILE || 'data/customers.json',
+  customersFile: env.CUSTOMERS_FILE || `${dataDir}/customers.json`,
   // Maliyet koruması (USD, tahmini): günlük uyarı eşiği ve (0 = kapalı) günlük limit
   dailyAlertUsd: Number(env.DAILY_ALERT_USD ?? 3),
   dailyCapUsd: Number(env.DAILY_CAP_USD ?? 0),
-  pendingOrdersFile: env.PENDING_ORDERS_FILE || 'data/pending-orders.json',
-  memoFile: env.MEMO_FILE || 'data/memos.json',
-  visualFile: env.VISUAL_FILE || 'data/visual-cache.json',
-  usageFile: env.USAGE_FILE || 'data/usage.json',
+  pendingOrdersFile: env.PENDING_ORDERS_FILE || `${dataDir}/pending-orders.json`,
+  memoFile: env.MEMO_FILE || `${dataDir}/memos.json`,
+  visualFile: env.VISUAL_FILE || `${dataDir}/visual-cache.json`,
+  usageFile: env.USAGE_FILE || `${dataDir}/usage.json`,
   // Sistem istemine ek olarak siteden çekilen sayfa metinleri eklensin mi (varsayılan hayır: pahalı ve kurallar kodda)
   siteInfoInPrompt: String(env.SITE_INFO_IN_PROMPT || '').toLowerCase() === 'true',
   // Hatırlatmadaki hediye çorap görseli (boşsa katalogda 'çorap' ürünü aranır)
@@ -73,8 +77,9 @@ export const cfg = {
   followupHours: Number(env.FOLLOWUP_HOURS ?? 6),
   followup2Hours: Number(env.FOLLOWUP2_HOURS ?? 16),
   // Mağaza yetkilisi (insan) müşteriye yazdıktan sonra bot bu kadar saat sessiz kalıp sadece izler
-  handoffHours: Number(env.HANDOFF_HOURS ?? 3),
-  learnedFile: env.LEARNED_FILE || 'data/learned.json',
+  // Mağaza yetkilisi müşteriye yazarsa bot bu kadar susar; süre dolunca (yetkili yazmıyorsa) kaldığı yerden devam eder. Varsayılan 60 sn
+  handoffHours: env.HANDOFF_HOURS !== undefined && env.HANDOFF_HOURS !== '' ? Number(env.HANDOFF_HOURS) : Number(env.HANDOFF_SECONDS || 60) / 3600,
+  learnedFile: env.LEARNED_FILE || `${dataDir}/learned.json`,
 
   tgToken: env.TELEGRAM_BOT_TOKEN,
   tgChatId: env.TELEGRAM_CHAT_ID,

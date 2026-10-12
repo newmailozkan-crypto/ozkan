@@ -483,7 +483,8 @@ async function identifyImage(session, hint) {
   // 2. aşama: emin değilsek (güven düşük ya da en iyi iki FARKLI model yakın) güçlü model en iyi adayları 2'şer görselle yeniden değerlendirir
   const top = ranked[0];
   const second = ranked.find((r) => top && r.p.modelKey !== top.p.modelKey);
-  const unsure = !top || top.guven < 0.85 || (second && top.guven - second.guven < 0.2);
+  void second;
+  const unsure = Boolean(cfg.visionStrongModel); // doğruluk için güçlü model HER müşteri fotoğrafında en iyi adayları yeniden değerlendirir (katalog/kendi fotoğrafımız eşleşmeleri ücretsiz atlanır)
   if (cfg.visionStrongModel && unsure && ranked.length && ranked[0].neden !== 'görsel karşılaştırma yapılamadı') {
     const pick = [];
     const seen = new Set();

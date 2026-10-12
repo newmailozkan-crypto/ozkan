@@ -1,6 +1,6 @@
 import express from 'express';
 import crypto from 'node:crypto';
-import { cfg, checkConfig } from './src/config.js';
+import { cfg, checkConfig, dataDir } from './src/config.js';
 import * as ig from './src/instagram.js';
 import { usageReport } from './src/claude.js';
 import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, allProducts, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
@@ -64,7 +64,7 @@ const debugAuth = (req, res) => {
   }
   return true;
 };
-app.get('/debug/status', (req, res) => debugAuth(req, res) && res.json({ ...debugStatus(), env: Object.fromEntries(['IG_VERIFY_TOKEN','IG_ACCESS_TOKEN','IG_ACCOUNT_ID','ANTHROPIC_API_KEY','PRODUCT_FEED_URL','SITE_CATALOG_URL','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID'].map((k) => [k, Boolean(process.env[k])])), models: { chat: cfg.model, vision: cfg.visionModel, index: cfg.indexModel } }));
+app.get('/debug/status', (req, res) => debugAuth(req, res) && res.json({ ...debugStatus(), disk: { klasor: dataDir, kalici_disk_bagli: dataDir !== 'data' }, yetkili_yazinca_bot_susma_sn: Math.round(cfg.handoffHours * 3600), env: Object.fromEntries(['IG_VERIFY_TOKEN','IG_ACCESS_TOKEN','IG_ACCOUNT_ID','ANTHROPIC_API_KEY','PRODUCT_FEED_URL','SITE_CATALOG_URL','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID'].map((k) => [k, Boolean(process.env[k])])), models: { chat: cfg.model, vision: cfg.visionModel, index: cfg.indexModel } }));
 app.get('/debug/feed', (req, res) => debugAuth(req, res) && res.json(debugFeed()));
 app.get('/debug/catalog', (req, res) => debugAuth(req, res) && res.json(debugSearch(String(req.query.q || ''), Math.min(Number(req.query.limit) || 10, 30))));
 app.get('/debug/usage', (req, res) => debugAuth(req, res) && res.json(usageReport()));
@@ -149,7 +149,36 @@ function handleEcho(event) {
   t.unref?.();
 }
 
-const handoffAlert = new Map();
+// Yetkili yazarken gelen müşteri mesajları bekletilir; yetkili 60 sn yazmazsa bot bu mesajları cevaplayıp kaldığı yerden devam eder.
+// Yetkili 30 dakikadan uzun süre yazışmaya devam ederse bekleyen mesajlar bırakılır (yetkili ilgileniyor).
+const deferred = new Map(); // müşteri -> { items, since, timer }
+function deferItems(senderId, items) {
+  let d = deferred.get(senderId);
+  if (!d) {
+    d = { items: [], since: Date.now(), timer: null };
+    deferred.set(senderId, d);
+  }
+  d.items.push(...items);
+  if (d.timer) return;
+  const check = () => {
+    d.timer = null;
+    if (humanActive(senderId, cfg.handoffHours)) {
+      if (Date.now() - d.since > 30 * 60 * 1000) {
+        deferred.delete(senderId);
+        console.log('[devir] yetkili 30 dk+ yazıştı, bekleyen mesajlar bırakıldı:', senderId);
+        return;
+      }
+      d.timer = setTimeout(check, 10000);
+      d.timer.unref?.();
+      return;
+    }
+    deferred.delete(senderId);
+    console.log(`[devir] yetkili yazmıyor, bot ${d.items.length} bekleyen mesajla kaldığı yerden devam ediyor:`, senderId);
+    for (const it of d.items) batcher.add(senderId, it);
+  };
+  d.timer = setTimeout(check, Math.max(5000, cfg.handoffHours * 3600 * 1000 + 3000));
+  d.timer.unref?.();
+}
 async function processMessage(event) {
   const senderId = event.sender?.id;
   if (event.read && senderId) {
@@ -184,12 +213,8 @@ async function processMessage(event) {
   noteUserMessage(senderId);
   // Mağaza yetkilisi müşteriyle yazışıyorsa bot cevap vermez, sadece izler
   if (humanActive(String(senderId), cfg.handoffHours)) {
-    observeCustomer(String(senderId), msg.text || (image ? '[müşteri görsel gönderdi]' : '[müşteri bir paylaşım iletti]'));
     recordEvent('izleme', { kimden: senderId, metin: String(msg.text || '').slice(0, 80) });
-    if (Date.now() - (handoffAlert.get(String(senderId)) || 0) > 30 * 60 * 1000) {
-      handoffAlert.set(String(senderId), Date.now());
-      sendTelegram(`👀 Müşteri yazdı ama bot sessiz (mağaza yetkilisi bu müşteriyle yazıştı sayılıyor, ${cfg.handoffHours} saat).\nMüşteri: ${senderId}\nMesaj: ${String(msg.text || '(görsel/paylaşım)').slice(0, 150)}\nBu müşteriye siz cevap vermediyseniz bot yanlışlıkla susmuş olabilir.`).catch(() => {});
-    }
+    deferItems(String(senderId), [{ msg, image, sharedAtts, story, hasShared }]);
     return;
   }
   ig.typingOn(senderId);
@@ -216,6 +241,8 @@ function resolveReplyFromHistory(history, rmid) {
 const lastResolved = new Map(); // müşteri -> paylaşım görseli en son ne zaman çözüldü
 
 async function processBatch(senderId, items) {
+  // Mesajlar toplanırken yetkili yazmaya başladıysa bot susar, bekletir
+  if (humanActive(String(senderId), cfg.handoffHours)) return deferItems(String(senderId), items);
   const send = {
     text: async (t, productId) => {
       const ids = await ig.sendText(senderId, t);
