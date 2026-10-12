@@ -5,6 +5,7 @@ import * as ig from './src/instagram.js';
 import { usageReport } from './src/claude.js';
 import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, allProducts, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
+import { count as convCount } from './src/convlog.js';
 import { handleDirectMessage, handleComment, warmProductHashes, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup, humanMessage, observeCustomer, humanActive, hasSession, identifyLog, needsMemo, setMemo, getPendingOrders } from './src/ai.js';
 import { sendTelegram, telegramDiagnose } from './src/telegram.js';
 import { resolveShared, isMediaAttachment } from './src/media.js';
@@ -64,7 +65,7 @@ const debugAuth = (req, res) => {
   }
   return true;
 };
-app.get('/debug/status', (req, res) => debugAuth(req, res) && res.json({ ...debugStatus(), disk: { klasor: dataDir, kalici_disk_bagli: dataDir !== 'data' }, yetkili_yazinca_bot_susma_sn: Math.round(cfg.handoffHours * 3600), env: Object.fromEntries(['IG_VERIFY_TOKEN','IG_ACCESS_TOKEN','IG_ACCOUNT_ID','ANTHROPIC_API_KEY','PRODUCT_FEED_URL','SITE_CATALOG_URL','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID'].map((k) => [k, Boolean(process.env[k])])), models: { chat: cfg.model, vision: cfg.visionModel, index: cfg.indexModel } }));
+app.get('/debug/status', (req, res) => debugAuth(req, res) && res.json({ ...debugStatus(), disk: { klasor: dataDir, kalici_disk_bagli: dataDir !== 'data' }, sohbet_kaydi: { dosya: cfg.convFile, diskte_tutulan_musteri: convCount(), en_fazla: 30, her_musteri_son_mesaj: 30 }, yetkili_yazinca_bot_susma_sn: Math.round(cfg.handoffHours * 3600), env: Object.fromEntries(['IG_VERIFY_TOKEN','IG_ACCESS_TOKEN','IG_ACCOUNT_ID','ANTHROPIC_API_KEY','PRODUCT_FEED_URL','SITE_CATALOG_URL','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID'].map((k) => [k, Boolean(process.env[k])])), models: { chat: cfg.model, vision: cfg.visionModel, index: cfg.indexModel } }));
 app.get('/debug/feed', (req, res) => debugAuth(req, res) && res.json(debugFeed()));
 app.get('/debug/catalog', (req, res) => debugAuth(req, res) && res.json(debugSearch(String(req.query.q || ''), Math.min(Number(req.query.limit) || 10, 30))));
 app.get('/debug/usage', (req, res) => debugAuth(req, res) && res.json(usageReport()));
