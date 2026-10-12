@@ -199,7 +199,7 @@ function staticPrompt() {
    a) Önce offer_campaign çağır ve FOTOĞRAFSIZ, kısa şunu sor: "Siparişiniz hazır 😊 Kampanyamız var: 2. ürün sadece ${cfg.campaignPrice} TL! 🎁 İkinci bir ürün alırsanız sepetinizdeki en uygun fiyatlı ürün ${cfg.campaignPrice} TL olur (aynı siparişte). Bir ürün daha eklemek ister misiniz?" Cevabı BEKLE (sistem, cevap gelmeden siparişi engeller).
    b) Müşteri "evet/olur/bir tane daha alabilirim" derse suggest_upsell çağır (müşterinin numarasında stokta olan, tarzına uygun 4-5 model fotoğraflı gider) ve "Hangisini beğendiniz?" diye sor. Beğenmezse suggest_upsell'i tekrar çağır (daha önce gösterilenler otomatik hariç tutulur, 4-5 yeni model). İstemezse ısrar etme, sipariş özetine geç.
    Ekleme olursa calc_cart; tek sayıdaysa bir sonraki çifte (3→4, 5→6), sepet ${cfg.freeShippingMin.toLocaleString('tr-TR')} TL altındaysa ücretsiz kargo için ek ürüne teşvik et (calc_cart ipuçları). Hangi ürünün ${cfg.campaignPrice} TL olduğunu calc_cart sonucuna göre söyle (en ucuz ürün).
-6. Kısa sipariş özeti (ürün, numara, indirim, kargo, ödenecek toplam, adres, kapıda ödeme) yaz ve TEK KEZ onay iste. Müşteri onay verince (evet/onaylıyorum/tamam/olur) aynı turda HEMEN submit_order çağır; ikinci kez onay isteme, özeti tekrarlama, kampanya/ek ürün teklifi yapma (bir sipariş için bir kez submit_order).
+6. Kısa sipariş özeti (ürün, numara, indirim, kargo, ödenecek toplam, adres, kapıda ödeme) yaz ve TEK KEZ onay iste. Müşteri onay verince (evet/onaylıyorum/tamam/olur) aynı turda HEMEN submit_order çağır; ikinci kez onay isteme, özeti tekrarlama, kampanya/ek ürün teklifi yapma (bir sipariş için bir kez submit_order). submit_order sonucu ok:true dönmeden ASLA "siparişiniz alındı / sisteme kaydedildi / paketlenecek" deme; ok:false dönerse nedenine göre düzelt (ürün id'sini search_products ile bul, eksik bilgiyi iste) ve tekrar dene; müşteriye sipariş alındı yalanı söyleme.
 7. Sipariş alınınca: teşekkür, 24 saatte paketlenip SMS ile bilgi verileceği, kapıda ödeme + şeffaf kargo, ürünü teslim alınca memnuniyet fotoğrafı beklediğimiz (📸). Hepsi 3-4 kısa cümlede.
 - Kampanya (2. ürün ${cfg.campaignPrice} TL) yalnızca TEK siparişte birlikte alınan ürünlere uygulanır. Eski "2'li alımda 300 TL, 4'lü alımda 600 TL indirim" kampanyası İPTAL edildi, asla bahsetme. Müşteri ayrı ayrı sipariş verirse kampanya birleşmez; kampanya için ürünlerin aynı siparişte olması gerektiğini söyle (önceki sipariş 3 saat içindeyse isterse iptal edip hepsini tek siparişte toplayabileceğini belirt).
 
@@ -750,11 +750,13 @@ async function submitOrder(session, userId, a) {
   const qtyTotal = (a.items || []).reduce((n, it) => n + (Number(it.qty) || 1), 0);
   // Sepette zaten 2+ ürün varsa kampanyadan yararlanılıyor: tekrar teklif edilmez, sipariş doğrudan tamamlanır
   if (qtyTotal >= 2) session.upsellSkip = true;
-  if (!session.upsellSkip && (session.upsellTurn === undefined || session.turn <= session.upsellTurn)) {
+  // Kapı en çok BİR kez engeller: ikinci denemede sipariş geçer (müşteri onayladıysa sipariş asla bu yüzden takılı kalmasın)
+  if (!session.upsellSkip && (session.upsellTurn === undefined || session.turn <= session.upsellTurn) && !session.gateBlocked) {
+    session.gateBlocked = true;
     return {
       ok: false,
       hatalar: ['UPSELL_YAPILMADI'],
-      not: 'Sipariş henüz tamamlanamaz: önce offer_campaign çağır, "2. ürün ' + cfg.campaignPrice + ' TL" kampanyasını kısaca sunup "Bir ürün daha eklemek ister misiniz?" diye sor ve müşterinin cevabını bekle. Bu mesajda sipariş özeti yazma, siparişi tamamlama.',
+      not: 'SİPARİŞ HENÜZ KAYDEDİLMEDİ, müşteriye "siparişiniz alındı/kayda geçti" DEME. Sipariş henüz tamamlanamaz: önce offer_campaign çağır, "2. ürün ' + cfg.campaignPrice + ' TL" kampanyasını kısaca sunup "Bir ürün daha eklemek ister misiniz?" diye sor ve müşterinin cevabını bekle. Bu mesajda sipariş özeti yazma, siparişi tamamlama.',
     };
   }
   const errors = [];
@@ -812,6 +814,7 @@ async function submitOrder(session, userId, a) {
     savePending();
   }
   session.lastOrder = { hash, ts: Date.now(), total };
+  session.gateBlocked = false;
   session.upsellTurn = undefined;
   session.upsellSkip = false;
   customers.addOrder(userId, order); // müşteri 'sipariş verdi' olarak işaretlenir ve hafızaya yazılır
@@ -1257,6 +1260,14 @@ async function agentLoop({ session, userId, send, tools }) {
         session.messages.push({ role: 'user', content: '[SİSTEM NOTU: Taslağında numaranın olmadığını söyledin ama alternatif fotoğraf göndermedin. Şimdi find_alternatives (her ürün için ayrı) çağır: önce numaranın olmadığını ve mevcut numaraları kısaca söyle, sonra aynı modelin diğer renklerini ya da tarz olarak en benzer modelleri öner.]' });
         continue;
       }
+      // Sipariş kaydedilmediği halde "siparişiniz alındı" demek yasak: müşteri aldandığını sanıp beklemesin
+      if (!session.orderGuardNudged && /sipariş(iniz)?[^.!?\n]{0,40}(alındı|kayd(a|ı|edildi)|oluşturuldu|hazırlan|paketlen|onaylandı)/i.test(out) && !(session.lastOrder && Date.now() - session.lastOrder.ts < 2 * 60 * 1000)) {
+        session.orderGuardNudged = true;
+        console.warn('[audit] sipariş kaydedilmeden "alındı" denmeye çalışıldı, submit_order çağırtılıyor');
+        session.messages.push({ role: 'user', content: '[SİSTEM NOTU: Taslağında siparişin alındığını söyledin ama submit_order BAŞARIYLA dönmedi. Müşteri siparişi onayladıysa ŞİMDİ submit_order çağır (ürünler için araç sonuçlarındaki SAYISAL id kullan, bilmiyorsan search_products çağır). Sonuç ok:true olmadan "siparişiniz alındı" DEME.]' });
+        continue;
+      }
+      session.orderGuardNudged = false;
       const problems = auditReply(out);
       if (problems.length) {
         console.warn('[audit] kural ihlali yakalandı:', problems.join(' | '));

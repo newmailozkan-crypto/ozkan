@@ -791,6 +791,11 @@ export function getProduct(id) {
   if (!key || /^\d+$/.test(key)) return null;
   const exact = products.filter((p) => fold(p.title) === key);
   if (exact.length) return exact.find((p) => p.inStock) || exact[0];
+  // "rival siyah beyaz" -> "Rival Siyah Beyaz (Su Geçirmez)": başlık bu ifadeyle başlıyorsa (stokta olan öncelikli)
+  if (key.length >= 6) {
+    const pre = products.filter((p) => fold(p.title).startsWith(key + ' ') || fold(p.title).startsWith(key));
+    if (pre.length) return pre.find((p) => p.inStock) || pre[0];
+  }
   return null;
 }
 
