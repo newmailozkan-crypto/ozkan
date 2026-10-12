@@ -160,7 +160,7 @@ export function humanActive(userId, hours) {
 export function pushRecent(userId, role, text, opts = {}) {
   const t = String(text || '').trim().slice(0, 300);
   if (!t) return;
-  convlog.add(userId, opts.human ? 'h' : role, t, Boolean(opts.media)); // kalıcı sohbet kaydı (son 30 müşteri x son 30 mesaj)
+  if (role !== 'a' || opts.human) convlog.add(userId, opts.human ? 'h' : role, t, Boolean(opts.media)); // kalıcı sohbet kaydı; botun giden mesajları gönderim anında (instagram.js) kaydedilir
   const r = rec(userId);
   r.recent = r.recent || [];
   r.recent.push({ r: role, t });

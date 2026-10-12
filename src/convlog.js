@@ -45,6 +45,7 @@ export const has = (id) => db.has(String(id));
 export const get = (id) => db.get(String(id)) || null;
 export const fullAt = (id) => db.get(String(id))?.fullAt || 0;
 export const count = () => db.size;
+export const list = () => [...db.entries()].map(([id, e]) => ({ id, ...e })).sort((a, b) => (b.at || 0) - (a.at || 0));
 
 function entry(id) {
   const k = String(id);

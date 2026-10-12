@@ -5,7 +5,7 @@ import * as ig from './src/instagram.js';
 import { usageReport } from './src/claude.js';
 import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, allProducts, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
 import { startSiteRefresh, siteStatus } from './src/siteInfo.js';
-import { count as convCount } from './src/convlog.js';
+import { count as convCount, list as convList, get as convGet } from './src/convlog.js';
 import { handleDirectMessage, handleComment, warmProductHashes, setUsername, noteUserMessage, noteBotMessage, noteSeen, dueFollowups, buildFollowup, humanMessage, observeCustomer, humanActive, hasSession, identifyLog, needsMemo, setMemo, getPendingOrders } from './src/ai.js';
 import { sendTelegram, telegramDiagnose } from './src/telegram.js';
 import { resolveShared, isMediaAttachment } from './src/media.js';
@@ -88,6 +88,27 @@ app.get('/debug/conversations', async (req, res) => {
     out.push({ katilimcilar: c.participants, musteri_id: id, okunan_mesaj: h.length, ilk: h[0]?.text?.slice(0, 40) || null, son: h[h.length - 1]?.text?.slice(0, 40) || null });
   }
   res.json({ bizim_hesap_id_env: String(cfg.igAccountId), sohbet_sayisi: convs.length, ornekler: out });
+});
+// Botun gerçekte ne yazdığını gösteren sohbet kaydı sayfası (Instagram uygulaması bazı mesajları göstermese bile burada hepsi görünür)
+const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const when = (at) => (at ? new Date(at).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
+app.get('/debug/chat', (req, res) => {
+  if (!debugAuth(req, res)) return;
+  const key = encodeURIComponent(String(req.query.key));
+  const style = '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:15px system-ui;max-width:640px;margin:12px auto;padding:0 12px}a{color:#06c}.m{margin:6px 0;padding:8px 10px;border-radius:12px;max-width:85%;white-space:pre-wrap}.u{background:#eee}.a{background:#e6dcff;margin-left:auto}.h{background:#d7f5d7;margin-left:auto}small{color:#666;display:block}li{margin:8px 0}</style>';
+  const id = req.query.id ? String(req.query.id) : '';
+  if (id) {
+    const e = convGet(id);
+    if (!e) return res.status(404).send(style + 'Kayıt yok. <a href="?key=' + key + '">Geri</a>');
+    const who = { u: 'Müşteri', a: 'Bot', h: 'Yetkili (insan)' };
+    const rows = [...(e.older || []).map((l) => `<div class="m u"><small>eski (kısaltılmış)</small>${esc(l)}</div>`), ...e.msgs.map((m) => `<div class="m ${m.r}"><small>${who[m.r]} · ${when(m.at)}</small>${esc(m.t || (m.m ? '(görsel/paylaşım)' : ''))}</div>`)];
+    return res.send(`${style}<a href="?key=${key}">← Tüm sohbetler</a><h3>${esc(e.name || id)}</h3>${rows.join('')}`);
+  }
+  const items = convList().map((e) => {
+    const last = e.msgs[e.msgs.length - 1];
+    return `<li><a href="?key=${key}&id=${encodeURIComponent(e.id)}">${esc(e.name || e.id)}</a> <small>${when(e.at)} · ${e.msgs.length} mesaj · son: ${esc(last ? `${last.r === 'u' ? 'müşteri' : last.r === 'h' ? 'yetkili' : 'bot'}: ${(last.t || '(görsel)').slice(0, 60)}` : '')}</small></li>`;
+  });
+  res.send(`${style}<h3>Son ${items.length} sohbet (botun gönderdiği/aldığı mesajlar)</h3><ul>${items.join('') || '<li>Henüz kayıt yok</li>'}</ul>`);
 });
 app.get('/debug/families', (req, res) => debugAuth(req, res) && res.json(debugFamilies()));
 

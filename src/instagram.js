@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { cfg } from './config.js';
+import * as convlog from './convlog.js';
 
 const base = () => `https://graph.instagram.com/${cfg.graphVersion}`;
 
@@ -71,22 +72,34 @@ export function isOurMessage(recipientId, mid, text, hasAttachment) {
   });
 }
 
+// Art arda gönderilen mesajlar arasında kısa bekleme (Instagram uygulaması çok hızlı gelen mesajları sohbet ekranında göstermeyebiliyor)
+const lastSend = new Map();
+async function pace(recipientId) {
+  const wait = 700 - (Date.now() - (lastSend.get(String(recipientId)) || 0));
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastSend.set(String(recipientId), Date.now());
+}
+
 export async function sendText(recipientId, text) {
   const ids = [];
   for (const part of chunkText(text)) {
+    await pace(recipientId);
     const r = await call('/me/messages', { recipient: { id: recipientId }, message: { text: part } });
     noteSent(recipientId, part, r?.message_id);
+    convlog.add(recipientId, 'a', part); // kalıcı kayıt: botun gönderdiği her mesaj /debug/chat'te görünür
     if (r?.message_id) ids.push(r.message_id);
   }
   return ids;
 }
 
 export async function sendImage(recipientId, url) {
+  await pace(recipientId);
   const r = await call('/me/messages', {
     recipient: { id: recipientId },
     message: { attachment: { type: 'image', payload: { url } } },
   });
   noteSent(recipientId, '', r?.message_id);
+  convlog.add(recipientId, 'a', '(ürün fotoğrafı gönderdik)', true);
   return r;
 }
 
