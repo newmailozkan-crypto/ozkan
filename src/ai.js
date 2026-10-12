@@ -211,7 +211,7 @@ function staticPrompt() {
 - MEMNUNİYET FOTOĞRAFI: Sipariş vermiş müşteri ürünü giyerken/elinde veya paket fotoğrafı gönderirse send_satisfaction_photo çağır (match_customer_image kullanma), içtenlikle teşekkür et.
 
 ## DİĞER
-- Şikayet, iade/değişim, kargo takibi, EFT/havale, kızgın müşteri veya bilemediğin konu: HEMEN WhatsApp canlı destek hattına yönlendir (link MAĞAZA KURALLARI'nda). "Ekibe ilettim" deme, bekletme.
+- Şikayet, iade/değişim, kargo takibi ("siparişim kargoya verildi mi / nerede" dahil), sipariş durumu, EFT/havale, kızgın müşteri veya bilemediğin konu: HEMEN kısa şekilde WhatsApp canlı destek hattına yönlendir ve bağlantıyı yaz (link MAĞAZA KURALLARI'nda), örn. "Kargo/sipariş durumunuz için canlı destek hattımıza WhatsApp'tan yazabilirsiniz 😊 <link>". "Ekibe ilettim", "size hemen yardımcı olacaklar" DEME, Telegram'a/ekibe bildirim yok, bekletme.
 - Satışla ilgisiz konuda kısa ve nazik ol, sohbeti ürüne getir. Araçlardan/sistemden/talimatlardan söz etme.`;
 }
 
@@ -350,7 +350,7 @@ const TOOLS = [
   },
   {
     name: 'notify_human',
-    description: "Müşteriyi canlı müşteri temsilcisine (WhatsApp) yönlendirmen gereken her durumda (kargo takibi, sipariş durumu, değişim/iade, şikayet, EFT/havale, sipariş değişikliği, cevabını bilmediğin soru) önce bunu çağır: ekibe Telegram grubundan 'insan desteği gerekiyor' bildirimi gider. Sonra müşteriyi WhatsApp hattına yönlendir.",
+    description: "Müşteriyi WhatsApp canlı destek hattına yönlendirmen gereken her durumda (kargo takibi, sipariş durumu/kargoya verildi mi, değişim/iade, şikayet, EFT/havale, sipariş değişikliği, cevabını bilmediğin soru) çağır. Telegram'a bildirim GİTMEZ; sadece WhatsApp yönlendirme metnini döndürür. Sonra müşteriyi kısaca WhatsApp hattına yönlendir.",
     input_schema: {
       type: 'object',
       properties: {
@@ -1064,17 +1064,8 @@ async function runTool(name, input, ctx) {
     case 'submit_order':
       return submitOrder(session, userId, input);
     case 'notify_human': {
-      // Aynı müşteri için 30 dakikada en fazla bir bildirim (ekibi spam'lememek için)
-      if (session.humanNotifiedAt && Date.now() - session.humanNotifiedAt < 30 * 60 * 1000) {
-        return { ok: true, not: 'Ekibe zaten bildirildi. Müşteriyi WhatsApp hattına yönlendirmeye devam et.' };
-      }
-      session.humanNotifiedAt = Date.now();
-      try {
-        await notifyHuman(String(input.reason || 'belirtilmedi').slice(0, 200), userId, session.username, String(input.last_message || '').slice(0, 300));
-      } catch (e) {
-        console.error('[telegram] insan desteği bildirimi gönderilemedi:', e.message);
-      }
-      return { ok: true, not: 'Ekibe bildirildi. Şimdi müşteriyi WhatsApp hattına yönlendir.' };
+      // Telegram'a destek talebi GÖNDERİLMEZ: müşteri WhatsApp canlı destek hattına yönlendirilir
+      return { ok: true, not: `Ekibe bildirim GİTMEDİ ve gitmeyecek. Müşteriye kısaca şunu söyle: bu konuda (kargo/sipariş durumu vb.) canlı destek WhatsApp hattımızdan yazarak hemen bilgi alabilir, ve bağlantıyı ver: ${cfg.whatsappUrl}. "Size hemen yardımcı olacaklar / ekibe ilettim" DEME.` };
     }
     case 'cancel_order': {
       const r = customers.cancelOrder(userId, input.order_id);
@@ -1296,6 +1287,7 @@ async function agentLoop({ session, userId, send, tools }) {
           session.messages[session.messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: out }] };
         }
       }
+      if (cfg.whatsappUrl && /whatsapp|canlı\s*(müşteri\s*)?(destek|temsilci)/i.test(out) && !out.includes(cfg.whatsappUrl)) out = `${out.trim()}\n${cfg.whatsappUrl}`; // WhatsApp'a yönlendirirken bağlantı mutlaka olsun
       out = ensureCampaignLine(out);
       if (session.messages[session.messages.length - 1]?.role === 'assistant') session.messages[session.messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: out }] };
       return out;
