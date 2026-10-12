@@ -58,59 +58,58 @@ export function noteSeen() {
   /* artık "görüldü" bilgisi gerekmiyor: süre son mesajdan itibaren sayılır */
 }
 
-// İki aşamalı hatırlatma (müşterinin SON mesajından itibaren): FOLLOWUP_HOURS (6 sa) sonra nazik hatırlatma, teklif yok;
-// hâlâ cevap yoksa FOLLOWUP2_HOURS (16 sa) sonra hediye çorap teklifi + çorap görseli. Gece dahil çalışır; Instagram'ın 24 saatlik penceresi içinde.
+// Tek aşamalı hatırlatma: bizim SON mesajımızdan itibaren FOLLOWUP_HOURS (4 sa) müşteri yazmazsa, sohbetin kaldığı yerden devam eden TEK bir hatırlatma gider.
+// Müşteri buna da yazmazsa bir daha mesaj atılmaz (müşteri yeniden yazana kadar). Gece dahil çalışır; Instagram'ın 24 saatlik penceresi içinde.
 export function dueFollowups() {
   if (!cfg.followupHours) return [];
   const now = Date.now();
   const h1 = cfg.followupHours * 3600 * 1000;
-  const h2 = cfg.followup2Hours * 3600 * 1000;
   const out = [];
   for (const [userId, r] of customers.all()) {
     const c = r.convo;
-    if (!c || !c.lastUserAt || !c.lastBotAt || c.lastBotAt < c.lastUserAt) continue; // müşteri sustuysa ve son mesajı biz atmışsak
-    const stage = c.followupStage || 0;
-    if (stage >= 2) continue;
+    if (!c || !c.lastUserAt || !c.lastBotAt || c.lastBotAt < c.lastUserAt) continue; // son mesaj bizden olmalı (müşteri yazmadıysa)
+    if ((c.followupStage || 0) >= 1) continue; // hatırlatma zaten gönderildi: müşteri yazmadıkça bir daha yok
     if (r.orders.some((o) => o.status === 'aktif')) continue;
     if (customers.humanActive(userId, cfg.handoffHours)) continue; // insan yazışıyor
-    const age = now - c.lastUserAt;
-    if (age > 23.5 * 3600 * 1000) continue; // 24 saatlik pencere kapanıyor
-    if (cfg.followup2Hours && age >= h2) out.push({ userId, stage: 2 }); // (kaçırıldıysa doğrudan 2. aşama)
-    else if (stage === 0 && age >= h1) out.push({ userId, stage: 1 });
+    if (now - c.lastUserAt > 23.5 * 3600 * 1000) continue; // 24 saatlik pencere kapanıyor/kapandı
+    if (now - c.lastBotAt >= h1) out.push({ userId, stage: 1 });
   }
   return out;
 }
 
-const STAGE1 = [
-  'Merhaba efendim 😊 Karar verebildiniz mi? Size yardımcı olmak için buradayım, dilerseniz sipariş adımlarına hemen geçebiliriz.',
-  'Efendim merhaba, aklınıza takılan bir şey var mı? Karar vermenizde yardımcı olmak isterim 😊',
-  'Merhaba 😊 Karar verebildiniz mi efendim? Dilerseniz yardımcı olmaya hazırım.',
+const FOLLOWUP_FALLBACK = [
+  'Merhaba efendim 😊 Konuşmamızda kaldığımız yerden devam edelim mi? Size yardımcı olmaya hazırım.',
+  'Efendim merhaba, kaldığımız yerden devam edebiliriz 😊 Aklınıza takılan bir şey var mı?',
 ];
-export const GIFT_TEXT = "Şimdi sipariş verirseniz size özel bir teklifimiz var 🎁 Siparişinize 249 ₺ değerindeki 3'lü Nike çoraplarımızdan hediye ürün ekleyeceğiz. Bu teklif kısa süreli bir tekliftir. Şimdi sipariş vermek ister misiniz?";
 
-// Hediye çorabın görseli: önce GIFT_SOCKS_IMAGE_URL, yoksa katalogda "çorap" ürünü
-export function giftSocksImage() {
-  if (cfg.giftSocksImage) return cfg.giftSocksImage;
-  const hit = catalog.searchProducts({ query: 'çorap', limit: 5, inStockOnly: false }).find((p) => /[çc]orap|sock/i.test(p.title) && p.images.length);
-  return hit?.images[0] || '';
+// Konuşmanın kaldığı yerden devam eden kısa hatırlatma (hızlı model, tek küçük çağrı); hata olursa sabit metin
+async function writeFollowup(userId) {
+  const e = convlog.get(userId);
+  const lines = (e?.msgs || []).slice(-10).map((m) => `${m.r === 'u' ? 'Müşteri' : m.r === 'h' ? 'Yetkili' : 'Biz'}: ${m.m && !m.t ? '(görsel)' : m.t}`);
+  if (lines.length < 2) return '';
+  try {
+    const r = await create({
+      model: cfg.model,
+      max_tokens: 120,
+      system: 'Sen bir ayakkabı mağazasının Instagram satış danışmanısın. Müşteri son mesajımıza saatlerdir cevap vermedi. Sohbetin KALDIĞI YERDEN devam eden TEK kısa hatırlatma mesajı yaz: en fazla 2 kısa cümle, "efendim" diye hitap et, sıcak ve nazik ol, en fazla 1 emoji. Sohbette konuşulan ürün/numara/aşamaya (örn. numarasını bekliyoruz, sipariş bilgilerini bekliyoruz, model seçimini bekliyoruz) kısaca değin ve devam etmek için tek kolay soru sor. Yeni fiyat, indirim, hediye veya teklif UYDURMA; ürün bilgisi ekleme. Sadece mesaj metnini yaz.',
+      messages: [{ role: 'user', content: `Sohbetin son kısmı:\n${lines.join('\n')}` }],
+    }, 'hatirlatma');
+    const t = r.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
+    return t.length >= 10 && t.length <= 400 ? t : '';
+  } catch (e2) {
+    console.error('[followup] metin yazılamadı:', e2.message);
+    return '';
+  }
 }
 
-// Yapay zeka kullanmaz (ücretsiz, tutarlı): sabit metinler
-export function buildFollowup(userId, stage) {
-  customers.markFollowupStage(userId, stage);
-  let text;
-  let imageUrl = '';
-  if (stage >= 2) {
-    text = GIFT_TEXT;
-    imageUrl = giftSocksImage();
-    customers.markGift(userId);
-  } else {
-    text = STAGE1[Math.floor(Math.random() * STAGE1.length)];
-  }
+// Hatırlatmayı yazar ve durumu işaretler (bir kez; müşteri yazmadıkça tekrarlanmaz)
+export async function buildFollowup(userId) {
+  customers.markFollowupStage(userId, 1);
+  const text = (await writeFollowup(userId)) || FOLLOWUP_FALLBACK[Math.floor(Math.random() * FOLLOWUP_FALLBACK.length)];
   customers.pushRecent(userId, 'a', text);
   const s = sessions.get(userId);
   if (s) addToSession(s, 'assistant', text);
-  return { text, imageUrl };
+  return { text, imageUrl: '' };
 }
 
 // ---------- insan devri: yetkili yazışırken bot susar, izler ve öğrenir ----------

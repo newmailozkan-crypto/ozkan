@@ -75,7 +75,7 @@ export const cfg = {
   giftSocksImage: env.GIFT_SOCKS_IMAGE_URL || '',
   // Art arda gelen müşteri mesajları bu kadar ms beklenip tek seferde işlenir
   batchMs: Number(env.BATCH_MS || 2500),
-  followupHours: Number(env.FOLLOWUP_HOURS ?? 6),
+  followupHours: Number(env.FOLLOWUP_HOURS ?? 4),
   followup2Hours: Number(env.FOLLOWUP2_HOURS ?? 16),
   // Mağaza yetkilisi (insan) müşteriye yazdıktan sonra bot bu kadar saat sessiz kalıp sadece izler
   // Mağaza yetkilisi müşteriye yazarsa bot bu kadar susar; süre dolunca (yetkili yazmıyorsa) kaldığı yerden devam eder. Varsayılan 60 sn

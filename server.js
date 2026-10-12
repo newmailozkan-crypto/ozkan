@@ -419,12 +419,12 @@ app.post('/webhook', (req, res) => {
   }
 });
 
-// ---- FOLLOWUP_HOURS (varsayılan 6) saat sessiz kalan müşterilere tek seferlik hatırlatma (gece dahil, 24 saatlik pencere içinde) ----
+// ---- Son mesajımızdan FOLLOWUP_HOURS (varsayılan 4) saat sonra müşteri yazmadıysa kaldığı yerden devam eden TEK hatırlatma; cevap yoksa bir daha yazılmaz ----
 function runFollowups() {
   for (const { userId, stage } of dueFollowups()) {
     enqueue(userId, async () => {
       try {
-        const { text, imageUrl } = buildFollowup(userId, stage);
+        const { text, imageUrl } = await buildFollowup(userId);
         if (imageUrl) {
           try {
             await ig.sendImage(userId, instagramImageUrl(imageUrl));
