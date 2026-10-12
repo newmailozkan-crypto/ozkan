@@ -92,7 +92,7 @@ app.get('/debug/conversations', async (req, res) => {
 // Botun gerçekte ne yazdığını gösteren sohbet kaydı sayfası (Instagram uygulaması bazı mesajları göstermese bile burada hepsi görünür)
 const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const when = (at) => (at ? new Date(at).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
-app.get('/debug/chat', (req, res) => {
+app.get('/debug/chat', async (req, res) => {
   if (!debugAuth(req, res)) return;
   const key = encodeURIComponent(String(req.query.key));
   const style = '<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:15px system-ui;max-width:640px;margin:12px auto;padding:0 12px}a{color:#06c}.m{margin:6px 0;padding:8px 10px;border-radius:12px;max-width:85%;white-space:pre-wrap}.u{background:#eee}.a{background:#e6dcff;margin-left:auto}.h{background:#d7f5d7;margin-left:auto}small{color:#666;display:block}li{margin:8px 0}</style>';
@@ -101,8 +101,17 @@ app.get('/debug/chat', (req, res) => {
     const e = convGet(id);
     if (!e) return res.status(404).send(style + 'Kayıt yok. <a href="?key=' + key + '">Geri</a>');
     const who = { u: 'Müşteri', a: 'Bot', h: 'Yetkili (insan)' };
-    const rows = [...(e.older || []).map((l) => `<div class="m u"><small>eski (kısaltılmış)</small>${esc(l)}</div>`), ...e.msgs.map((m) => `<div class="m ${m.r}"><small>${who[m.r]} · ${when(m.at)}</small>${esc(m.t || (m.m ? '(görsel/paylaşım)' : ''))}</div>`)];
-    return res.send(`${style}<a href="?key=${key}">← Tüm sohbetler</a><h3>${esc(e.name || id)}</h3>${rows.join('')}`);
+    // Instagram'ın kendi kaydıyla karşılaştır: bot mesajı Instagram'da kayıtlıysa sorun yalnızca uygulamanın göstermemesidir
+    const igRows = await ig.fetchFullHistory(id, 100).catch(() => []);
+    const loose = (t) => String(t || '').toLocaleLowerCase('tr').replace(/[^\p{L}\p{N}]+/gu, '').slice(0, 25);
+    const igBot = igRows.filter((h) => h.role === 'assistant').map((h) => loose(h.text));
+    const mark = (m) => {
+      if (m.r !== 'a' || !m.t || !igRows.length) return '';
+      const k = loose(m.t);
+      return igBot.some((x) => x && (x.startsWith(k.slice(0, 15)) || k.startsWith(x.slice(0, 15)))) ? ' · ✓ Instagram kaydında VAR' : ' · ✗ Instagram kaydında YOK';
+    };
+    const rows = [...(e.older || []).map((l) => `<div class="m u"><small>eski (kısaltılmış)</small>${esc(l)}</div>`), ...e.msgs.map((m) => `<div class="m ${m.r}"><small>${who[m.r]} · ${when(m.at)}${mark(m)}</small>${esc(m.t || (m.m ? '(görsel/paylaşım)' : ''))}</div>`)];
+    return res.send(`${style}<a href="?key=${key}">← Tüm sohbetler</a><h3>${esc(e.name || id)}</h3>${igRows.length ? '' : '<p>(Instagram kaydı okunamadı, karşılaştırma yapılamadı)</p>'}${rows.join('')}`);
   }
   const items = convList().map((e) => {
     const last = e.msgs[e.msgs.length - 1];
