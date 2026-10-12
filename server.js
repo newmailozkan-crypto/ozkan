@@ -330,7 +330,7 @@ async function processBatchInner(senderId, items, send) {
     let history = null;
     if (needsMemo(senderId) || (rmid && !replyTo)) {
       const mids = new Set(items.map((i) => i.msg.mid));
-      history = (await ig.fetchHistory(senderId, 100)).filter((h) => !mids.has(h.mid));
+      history = (await ig.fetchFullHistory(senderId)).filter((h) => !mids.has(h.mid)); // sohbet EN BAŞTAN okunur
       setMemo(senderId, history);
     }
     if (rmid && !replyTo) replyTo = resolveReplyFromHistory(history, rmid) || { unknown: true };
@@ -457,13 +457,14 @@ app.listen(cfg.port, () => console.log(`[server] ${cfg.port} portunda dinleniyor
 // Bot (yeniden) başlayınca en son yazışılan 5 müşterinin konuşmasını Instagram kaydından hafızaya al (Claude çağrısı yok, ücretsiz)
 setTimeout(async () => {
   try {
-    const ids = await ig.recentCustomerIds(5);
+    const ids = await ig.recentCustomerIds(30);
+    let n = 0;
     for (const id of ids) {
-      if (!needsMemo(id)) continue;
-      const h = await ig.fetchHistory(id, 100);
-      if (h.length) setMemo(id, h);
+      if (!needsMemo(id)) continue; // diskte kayıtlı ve güncel: tekrar okumaya gerek yok
+      const h = await ig.fetchFullHistory(id);
+      if (h.length) { setMemo(id, h); n++; }
     }
-    console.log(`[hafıza] başlangıçta ${ids.length} son sohbet hafızaya alındı`);
+    console.log(`[hafıza] başlangıçta ${ids.length} son sohbet kontrol edildi, ${n} tanesi Instagram'dan okundu`);
   } catch (e) {
     console.error('[hafıza] başlangıç yüklemesi başarısız:', e.message);
   }

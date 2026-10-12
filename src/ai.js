@@ -11,6 +11,7 @@ import { create } from './claude.js';
 import { buildAddress } from './address.js';
 import { getImage, getCustomerImage, dhash, hamming, isImageLive } from './images.js';
 import { describeCustomerImage } from './visualIndex.js';
+import * as convlog from './convlog.js';
 
 
 // ---------- oturumlar (bellek içi) ----------
@@ -132,7 +133,7 @@ export function humanMessage(userId, text) {
   // ekibin cevabı + önceki müşteri sorusu -> öğrenme örneği
   const lastQ = [...customers.recent(userId)].reverse().find((x) => x.r === 'u');
   if (lastQ) customers.addLearned(lastQ.t, t);
-  customers.pushRecent(userId, 'a', t);
+  customers.pushRecent(userId, 'a', t, { human: true });
   addToSession(session, 'assistant', `[Mağaza yetkilisi (insan) müşteriye şunu yazdı: ${t}]`);
 }
 
@@ -156,9 +157,11 @@ function staticPrompt() {
   return `Sen "${cfg.storeName}" ayakkabı mağazasının Instagram DM satış danışmanısın. Kibar, nazik, sıcak ve ikna edici konuşursun; Türkçe yazar, "siz" ve "efendim" dersin.
 
 ## ÜSLUP (çok önemli)
-- Mesajların KISA olsun: en fazla 2-3 kısa cümle (yaklaşık 200 karakter). Uzun paragraf, madde listesi ve gereksiz ayrıntı YOK. Müşteri sormadıkça malzeme/özellik anlatma; sadece sorulana ve bir sonraki adıma odaklan.
-- Her mesaj sonunda satışı ilerleten TEK kısa soru/adım (numara? sipariş verelim mi?). Ölçülü emoji (😊).
-- Sohbet geçmişine göre devam et. Alakasız, tekrar eden, içi boş mesajlar ("mesajınızı aldım" gibi) yazma. Müşteri bir şey sorduysa önce onu cevapla.
+- Mesajların ÇOK KISA olsun: en fazla 2 kısa cümle (yaklaşık 150 karakter). Gereksiz bilgi YOK: malzeme/özellik/kargo/ödeme anlatma (müşteri sormadıkça), "size yardımcı olmaktan memnuniyet duyarım" gibi dolgu cümleler, aynı bilgiyi tekrar yazma, madde listesi, uzun paragraf yok. Sadece sorulana cevap ver + tek kısa adım.
+- CEVAP VERMEDEN ÖNCE "KONUŞMA HAFIZASI" bölümünü ve sohbeti BAŞTAN SONA oku, sohbetin akışına göre devam et. Müşterinin daha önce söylediğini (model, numara, renk, adres, sorduğu ürünler) tekrar sorma. Önceki mesajını görmezden gelme; müşteri bir şey sorduysa önce onu cevapla.
+- ÜRÜN SORULUNCA: sadece ürünün olup olmadığını ve fiyatını (fiyat_tl) söyle. Fiyat yazdığın HER mesajda aynı mesajda mutlaka şunu da yaz: "2. ürün sadece ${cfg.campaignPrice} TL 🎁 İkinci ürünü dilediğiniz modelden seçebilirsiniz." (sipariş özetinde tekrar yazma). Ardından tek kısa soru (numara?).
+- ANLAŞILMAZSA: müşterinin ne demek istediğini anlamazsan "anlamadım" DEME; en güçlü tahminini kısa soruyla teyit et: "X modeli mi demek istediniz efendim?" / "... mı kastediyorsunuz?". Tek soru sor.
+- Mesaj sonunda satışı ilerleten TEK kısa soru/adım. Ölçülü emoji (😊).
 - "BU MÜŞTERİ HAKKINDA BİLDİKLERİMİZ" bölümü ve sohbetteki "[Mağaza yetkilisi (insan) ... yazdı]" satırları varsa onlarla çelişme, kaldığı yerden sürdür.
 
 ## DOĞRULUK
@@ -1226,6 +1229,16 @@ async function createSafe(session, params, tag) {
   }
 }
 
+// Fiyat söylenen HER mesajda "2. ürün 599 TL, dilediğiniz modelden seçebilirsiniz" bilgisi mutlaka bulunur (sipariş özeti/adres isteme mesajlarında eklenmez)
+const PRICE_IN_TEXT = /\d[\d.]*\s*(tl|₺|lira)/i;
+const SKIP_CAMPAIGN = /sipariş(iniz)?\s*özet|ödenecek\s*toplam|isim soyisim|mahalle|kapı no|iptal|ücretsiz kargo baremimiz|whatsapp/i;
+export function ensureCampaignLine(out) {
+  const t = String(out || '');
+  if (!PRICE_IN_TEXT.test(t) || SKIP_CAMPAIGN.test(t)) return t;
+  if (new RegExp(`${cfg.campaignPrice}\\s*(tl|₺)`, 'i').test(t) || /2\.\s*ürün/i.test(t)) return t;
+  return `${t.trim()}\n2. ürün sadece ${cfg.campaignPrice} TL 🎁 İkinci ürünü dilediğiniz modelden seçebilirsiniz.`;
+}
+
 async function agentLoop({ session, userId, send, tools }) {
   let photoSent = false;
   let nudged = false;
@@ -1284,6 +1297,8 @@ async function agentLoop({ session, userId, send, tools }) {
           session.messages[session.messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: out }] };
         }
       }
+      out = ensureCampaignLine(out);
+      if (session.messages[session.messages.length - 1]?.role === 'assistant') session.messages[session.messages.length - 1] = { role: 'assistant', content: [{ type: 'text', text: out }] };
       return out;
     }
 
@@ -1308,83 +1323,22 @@ async function agentLoop({ session, userId, send, tools }) {
 // ---------- DM ----------
 export const hasSession = (id) => (sessions.get(String(id))?.messages.length || 0) > 0;
 
-// Konuşma hafızası: Instagram sohbet kaydı (kalıcı) okunup bota "kayıt + özet" olarak verilir.
-// Yeniden başlatma, uzun ara (3 gün sonra yazma) veya kısaltılan oturumdan sonra bot geçmişi yine bilir.
-// Hafıza diske de yazılır (bot yeniden başlasa ve disk kalıcıysa Instagram'dan tekrar okumaya gerek kalmaz); disk silinirse Instagram kaydından (ücretsiz) yeniden kurulur.
-const storedMemos = new Map();
-try {
-  for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(cfg.memoFile, 'utf8')))) if (Date.now() - v.at < 14 * 86400000) storedMemos.set(k, v);
-} catch {
-  /* dosya yok */
-}
-let memoSaveT = null;
-function saveMemos() {
-  clearTimeout(memoSaveT);
-  memoSaveT = setTimeout(() => {
-    try {
-      fs.mkdirSync(path.dirname(cfg.memoFile), { recursive: true });
-      fs.writeFileSync(cfg.memoFile, JSON.stringify(Object.fromEntries(storedMemos)));
-    } catch {
-      /* önemsiz */
-    }
-  }, 3000);
-  memoSaveT.unref?.();
-}
+// Konuşma hafızası: son 30 müşterinin sohbeti diskte (convlog) tutulur ve her cevaptan önce bota "kayıt" olarak verilir.
+// Kayıtta olmayan / uzun süredir okunmamış müşteri için sohbet Instagram'dan EN BAŞTAN okunur (ücretsiz, Claude çağrısı yok) ve kayıt yeniden kurulur.
+const FULL_REFRESH_MS = 12 * 60 * 60 * 1000;
 export function needsMemo(id) {
-  let s = sessions.get(String(id));
-  if (!s || !s.memoAt) {
-    const st = storedMemos.get(String(id));
-    if (!st) return true;
-    s = getSession(String(id));
-    s.memo = st.memo;
-    s.memoAt = st.at;
-  }
-  const trimming = s.messages.length >= MAX_HISTORY - 2;
-  return Date.now() - s.memoAt > (trimming ? 20 : 12 * 60) * 60 * 1000;
+  const k = String(id);
+  if (!convlog.has(k) || !convlog.fullAt(k)) return true; // kayıtta yok veya hiç baştan okunmamış
+  const s = getSession(k);
+  if (!s.memo) { s.memo = convlog.memoText(k); s.memoAt = Date.now(); }
+  return Date.now() - convlog.fullAt(k) > FULL_REFRESH_MS;
 }
 
-const hhmm = (t) => (t ? new Date(t).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
-export function buildMemo(history) {
-  if (!history?.length) return '';
-  const lines = [];
-  const shown = [];
-  const sizes = [];
-  const asked = [];
-  for (const h of history.slice(-90)) {
-    const t = String(h.text || '').replace(/\s+/g, ' ').slice(0, 170);
-    h._t = t;
-    if (!t && !h.media) continue;
-    if (h.role === 'assistant') {
-      const m = t.match(/^(.{3,70}?) — [\d.]+ TL$/);
-      if (m && !shown.includes(m[1])) shown.push(m[1]);
-      lines.push(`${hhmm(h.at)} Biz: ${h.media ? '(fotoğraf gönderdik)' : t}`);
-    } else {
-      if (h.media) lines.push(`${hhmm(h.at)} Müşteri: (görsel/video/paylaşım gönderdi)`);
-      else {
-        lines.push(`${hhmm(h.at)} Müşteri: ${t}`);
-        const sz = t.match(/(?:^|[^\d])(3[5-9]|4[0-9])(?:[.,]5)?(?!\d)/);
-        if (sz && /numara|no\b|giyiyorum|istiyorum|var mı|beden|\b\d{2}\b/i.test(t)) sizes.push(sz[0].replace(/^\D/, ''));
-        if (/\?|var mı|fiyat|kaç|renk|stok/i.test(t)) asked.push(t.slice(0, 90));
-      }
-    }
-  }
-  const facts = [];
-  if (sizes.length) facts.push(`Müşterinin belirttiği numara(lar), sondan: ${[...new Set(sizes.reverse())].slice(0, 3).join(', ')}`);
-  if (shown.length) facts.push(`Daha önce gösterdiğimiz ürünler: ${shown.slice(-10).join('; ')}`);
-  if (asked.length) facts.push(`Müşterinin son soruları: ${asked.slice(-4).join(' | ')}`);
-  return [
-    '## KONUŞMA HAFIZASI (Instagram sohbet kaydından; tarih saat sırasıyla, en eski üstte)',
-    'Bu müşteriyle daha önce yazıştık. Aşağıdaki kayda göre devam et: sorduğu modeli, numarasını, gönderdiği görselleri, gösterdiğimiz ürünleri bil. Aynı şeyi tekrar sorma; müşteri günler sonra yazsa bile kaldığı yerden yardımcı ol. "Sohbet geçmişinde görsel yok / anlayamadım" DEME; kayıt aşağıda.',
-    ...(facts.length ? ['ÖZET: ' + facts.join(' || ')] : []),
-    'SON MESAJLAR:',
-    ...lines.slice(-14).map((l) => l.slice(0, 150)),
-  ].join('\n');
-}
 export function setMemo(id, history) {
   const s = getSession(String(id));
-  s.memo = buildMemo(history);
+  if (history?.length) convlog.seed(id, history);
+  s.memo = convlog.memoText(id);
   s.memoAt = Date.now();
-  if (s.memo) { storedMemos.set(String(id), { memo: s.memo, at: s.memoAt }); saveMemos(); }
 }
 
 export async function handleDirectMessage({ userId, text, imageUrl, imageData, notes = [], replyTo, caption, history, send }) {
@@ -1393,6 +1347,8 @@ export async function handleDirectMessage({ userId, text, imageUrl, imageData, n
   session.turn = (session.turn || 0) + 1;
   trimHistory(session.messages);
   compactHistory(session.messages);
+  // Hafıza bloğu: oturum yeniyse veya uzayıp kısaltılıyorsa diskteki kayıttan tazele (önbellek her turda bozulmasın)
+  if (!session.memo || session.messages.length >= MAX_HISTORY - 4) session.memo = convlog.memoText(userId) || session.memo || '';
 
   // Müşteri bir mesajımıza "yanıtla" yaptıysa: hangi ürün/mesaj olduğunu bota söyle
   const sys = [...notes];
@@ -1432,7 +1388,7 @@ export async function handleDirectMessage({ userId, text, imageUrl, imageData, n
 
   const idx = session.messages.length;
   session.messages.push({ role: 'user', content });
-  customers.pushRecent(userId, 'u', text || (hasImage ? '(ürün görseli)' : ''));
+  customers.pushRecent(userId, 'u', text || (hasImage ? '(ürün görseli)' : ''), { media: hasImage });
 
   try {
     const reply = await agentLoop({ session, userId, send, tools: TOOLS });

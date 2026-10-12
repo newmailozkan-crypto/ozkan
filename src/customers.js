@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { cfg } from './config.js';
+import * as convlog from './convlog.js';
 
 // Müşteri hafızası: siparişler, yorumlar, memnuniyet fotoğrafı. Dosyaya yazılır; yeniden başlatmada geri yüklenir.
 // (Render Free'de disk geçicidir: yeni dağıtımda silinebilir. Kalıcı disk bağlanırsa CUSTOMERS_FILE ile oraya yazılır.)
@@ -42,6 +43,7 @@ export const get = (userId) => db.get(String(userId)) || null;
 export function setUsername(userId, username) {
   if (!username) return;
   rec(userId).username = username;
+  convlog.setName(userId, username);
   save();
 }
 
@@ -155,9 +157,10 @@ export function humanActive(userId, hours) {
 }
 
 // Son konuşma satırları (bot yeniden başlasa da hatırlatma mesajı bağlama uygun yazılabilsin)
-export function pushRecent(userId, role, text) {
+export function pushRecent(userId, role, text, opts = {}) {
   const t = String(text || '').trim().slice(0, 300);
   if (!t) return;
+  convlog.add(userId, opts.human ? 'h' : role, t, Boolean(opts.media)); // kalıcı sohbet kaydı (son 30 müşteri x son 30 mesaj)
   const r = rec(userId);
   r.recent = r.recent || [];
   r.recent.push({ r: role, t });

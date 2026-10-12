@@ -196,3 +196,36 @@ export async function fetchHistory(userId, limit = 20) {
     return [];
   }
 }
+
+// Müşteriyle TÜM yazışmayı en baştan okur (sayfa sayfa). Hata olursa o ana kadar okunanı döndürür.
+export async function fetchFullHistory(userId, maxMsgs = 400) {
+  const F = 'id,message,from,created_time,attachments';
+  const mapMsg = (m) => ({
+    mid: m.id,
+    role: String(m.from?.id) === String(cfg.igAccountId) ? 'assistant' : 'user',
+    text: String(m.message || '').trim() || (m.attachments?.data?.length ? '[görsel/paylaşım gönderildi]' : ''),
+    media: !String(m.message || '').trim() && Boolean(m.attachments?.data?.length),
+    at: Date.parse(m.created_time) || 0,
+  });
+  let rows = [];
+  try {
+    const r = await call(`/me/conversations?platform=instagram&user_id=${encodeURIComponent(userId)}&fields=id,messages.limit(25){${F}}`, null, 'GET');
+    const msgs = r?.data?.[0]?.messages;
+    rows = (msgs?.data || []).map(mapMsg);
+    let next = msgs?.paging?.next;
+    for (let page = 0; next && rows.length < maxMsgs && page < 16; page++) {
+      const res = await fetch(next, { headers: { Authorization: `Bearer ${cfg.igToken}` }, signal: AbortSignal.timeout(20000) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || !Array.isArray(j.data)) break;
+      rows.push(...j.data.map(mapMsg));
+      next = j.paging?.next;
+    }
+  } catch (e) {
+    console.error('[history] tam sohbet okunamadı:', e.message);
+    if (!rows.length) return fetchHistory(userId, 25);
+  }
+  const seen = new Set();
+  return rows
+    .filter((m) => m.text && !seen.has(m.mid) && seen.add(m.mid))
+    .sort((a, b) => a.at - b.at);
+}

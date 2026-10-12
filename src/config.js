@@ -66,6 +66,7 @@ export const cfg = {
   dailyCapUsd: Number(env.DAILY_CAP_USD ?? 0),
   pendingOrdersFile: env.PENDING_ORDERS_FILE || `${dataDir}/pending-orders.json`,
   memoFile: env.MEMO_FILE || `${dataDir}/memos.json`,
+  convFile: env.CONV_FILE || `${dataDir}/conversations.json`,
   visualFile: env.VISUAL_FILE || `${dataDir}/visual-cache.json`,
   usageFile: env.USAGE_FILE || `${dataDir}/usage.json`,
   // Sistem istemine ek olarak siteden çekilen sayfa metinleri eklensin mi (varsayılan hayır: pahalı ve kurallar kodda)
