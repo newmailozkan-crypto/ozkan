@@ -197,8 +197,25 @@ export async function fetchHistory(userId, limit = 20) {
   }
 }
 
+// Son sohbetlerin listesi (sohbet kimliği + katılımcılar)
+export async function listConversations(n = 30) {
+  try {
+    const r = await call(`/me/conversations?platform=instagram&limit=${n}&fields=id,participants`, null, 'GET');
+    return (r?.data || []).map((c) => ({
+      convId: c.id,
+      participants: (c.participants?.data || []).map((p) => ({ id: String(p.id), username: p.username || null })),
+    }));
+  } catch (e) {
+    console.error('[history] sohbet listesi okunamadı:', e.message);
+    return [];
+  }
+}
+// Sohbetin müşteri tarafı: bizim hesap dışındaki katılımcı
+export const customerOf = (conv) => conv.participants.find((p) => p.id !== String(cfg.igAccountId))?.id || null;
+
 // Müşteriyle TÜM yazışmayı en baştan okur (sayfa sayfa). Hata olursa o ana kadar okunanı döndürür.
-export async function fetchFullHistory(userId, maxMsgs = 400) {
+// convId biliniyorsa doğrudan sohbet kimliğiyle okunur; "user_id geçersiz" hatasında sohbet listesinden bulunur.
+export async function fetchFullHistory(userId, maxMsgs = 400, convId = null) {
   const F = 'id,message,from,created_time,attachments';
   const mapMsg = (m) => ({
     mid: m.id,
@@ -207,10 +224,25 @@ export async function fetchFullHistory(userId, maxMsgs = 400) {
     media: !String(m.message || '').trim() && Boolean(m.attachments?.data?.length),
     at: Date.parse(m.created_time) || 0,
   });
+  const first = async (cid) => {
+    if (cid) {
+      const r = await call(`/${cid}?fields=messages.limit(25){${F}}`, null, 'GET');
+      return r?.messages;
+    }
+    const r = await call(`/me/conversations?platform=instagram&user_id=${encodeURIComponent(userId)}&fields=id,messages.limit(25){${F}}`, null, 'GET');
+    return r?.data?.[0]?.messages;
+  };
   let rows = [];
   try {
-    const r = await call(`/me/conversations?platform=instagram&user_id=${encodeURIComponent(userId)}&fields=id,messages.limit(25){${F}}`, null, 'GET');
-    const msgs = r?.data?.[0]?.messages;
+    let msgs;
+    try {
+      msgs = await first(convId);
+    } catch (e) {
+      if (convId) throw e;
+      const conv = (await listConversations(50)).find((c) => c.participants.some((p) => p.id === String(userId)));
+      if (!conv) throw e;
+      msgs = await first(conv.convId);
+    }
     rows = (msgs?.data || []).map(mapMsg);
     let next = msgs?.paging?.next;
     for (let page = 0; next && rows.length < maxMsgs && page < 16; page++) {
@@ -222,7 +254,7 @@ export async function fetchFullHistory(userId, maxMsgs = 400) {
     }
   } catch (e) {
     console.error('[history] tam sohbet okunamadı:', e.message);
-    if (!rows.length) return fetchHistory(userId, 25);
+    if (!rows.length) return [];
   }
   const seen = new Set();
   return rows

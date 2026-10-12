@@ -77,6 +77,17 @@ app.get('/debug/events', (req, res) => debugAuth(req, res) && res.json({ son_ola
 app.get('/debug/identify', (req, res) => debugAuth(req, res) && res.json({ kayitlar: [...identifyLog].reverse() }));
 app.get('/debug/telegram', async (req, res) => debugAuth(req, res) && res.json(await telegramDiagnose().catch((e) => ({ hata: e.message }))));
 app.get('/debug/orders', (req, res) => debugAuth(req, res) && res.json({ telegrama_iletilemeyen_bekleyen_siparisler: getPendingOrders() }));
+app.get('/debug/conversations', async (req, res) => {
+  if (!debugAuth(req, res)) return;
+  const convs = await ig.listConversations(5);
+  const out = [];
+  for (const c of convs.slice(0, 3)) {
+    const id = ig.customerOf(c);
+    const h = id ? await ig.fetchFullHistory(id, 400, c.convId) : [];
+    out.push({ katilimcilar: c.participants, musteri_id: id, okunan_mesaj: h.length, ilk: h[0]?.text?.slice(0, 40) || null, son: h[h.length - 1]?.text?.slice(0, 40) || null });
+  }
+  res.json({ bizim_hesap_id_env: String(cfg.igAccountId), sohbet_sayisi: convs.length, ornekler: out });
+});
 app.get('/debug/families', (req, res) => debugAuth(req, res) && res.json(debugFamilies()));
 
 // Instagram'ın alabilmesi için katalogdaki webp görselleri JPEG olarak sunar (yalnızca katalogda kayıtlı görseller)
@@ -457,14 +468,15 @@ app.listen(cfg.port, () => console.log(`[server] ${cfg.port} portunda dinleniyor
 // Bot (yeniden) başlayınca en son yazışılan 5 müşterinin konuşmasını Instagram kaydından hafızaya al (Claude çağrısı yok, ücretsiz)
 setTimeout(async () => {
   try {
-    const ids = await ig.recentCustomerIds(30);
+    const convs = await ig.listConversations(30);
     let n = 0;
-    for (const id of ids) {
-      if (!needsMemo(id)) continue; // diskte kayıtlı ve güncel: tekrar okumaya gerek yok
-      const h = await ig.fetchFullHistory(id);
+    for (const c of convs) {
+      const id = ig.customerOf(c);
+      if (!id || !needsMemo(id)) continue; // diskte kayıtlı ve güncel: tekrar okumaya gerek yok
+      const h = await ig.fetchFullHistory(id, 400, c.convId);
       if (h.length) { setMemo(id, h); n++; }
     }
-    console.log(`[hafıza] başlangıçta ${ids.length} son sohbet kontrol edildi, ${n} tanesi Instagram'dan okundu`);
+    console.log(`[hafıza] başlangıçta ${convs.length} son sohbet kontrol edildi, ${n} tanesi Instagram'dan okundu`);
   } catch (e) {
     console.error('[hafıza] başlangıç yüklemesi başarısız:', e.message);
   }
