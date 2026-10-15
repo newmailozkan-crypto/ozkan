@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { cfg } from './config.js';
+import { cfg, isAutoReply } from './config.js';
 import * as catalog from './catalog.js';
 import { siteInfoText } from './siteInfo.js';
 import { storeRulesText, priceCart, campaignShort } from './storeRules.js';
@@ -12,6 +12,8 @@ import { buildAddress } from './address.js';
 import { getImage, getCustomerImage, dhash, hamming, isImageLive } from './images.js';
 import { describeCustomerImage } from './visualIndex.js';
 import * as convlog from './convlog.js';
+import { videoFrames } from './media.js';
+import { fromBuffer } from './images.js';
 
 
 // ---------- oturumlar (bellek içi) ----------
@@ -160,6 +162,7 @@ function staticPrompt() {
 - CEVAP VERMEDEN ÖNCE "KONUŞMA HAFIZASI" bölümünü ve sohbeti BAŞTAN SONA oku, sohbetin akışına göre devam et. Müşterinin daha önce söylediğini (model, numara, renk, adres, sorduğu ürünler) tekrar sorma. Önceki mesajını görmezden gelme; müşteri bir şey sorduysa önce onu cevapla.
 - ÜRÜN SORULUNCA: sadece ürünün olup olmadığını ve fiyatını (fiyat_tl) söyle. Fiyat yazdığın HER mesajda aynı mesajda mutlaka şunu da yaz: "${campaignShort()}" (sipariş özetinde tekrar yazma). Ardından tek kısa soru (numara?).
 - ANLAŞILMAZSA: müşterinin ne demek istediğini anlamazsan "anlamadım" DEME; en güçlü tahminini kısa soruyla teyit et: "X modeli mi demek istediniz efendim?" / "... mı kastediyorsunuz?". Tek soru sor.
+- Müşteri sadece selam verir veya "fiyat nedir" derse: kısa sıcak karşılama + hangi modeli sorduğunu öğren (fotoğraf/ad iste); ASLA "web sitemizi/profilimizdeki linki ziyaret edin" diye yönlendirme, müşteriyle bizzat ilgilen ve siparişe teşvik et. Mağaza sahibinin otomatik karşılama mesajlarını ("ürünlerimizi incelemek ve sipariş vermek için ...") asla tekrarlama.
 - ASLA "özür dilerim", "görseli açamadım", "net gelmedi" deme. Sohbet sürüyorsa tekrar "Merhaba!" diye selam verme; doğrudan konuya gir. Müşteri art arda birden çok ürün/gönderi attıysa her birini ayrı ayrı, sırayla cevapla.
 - Mesaj sonunda satışı ilerleten TEK kısa soru/adım. Ölçülü emoji (😊).
 - "BU MÜŞTERİ HAKKINDA BİLDİKLERİMİZ" bölümü ve sohbetteki "[Mağaza yetkilisi (insan) ... yazdı]" satırları varsa onlarla çelişme, kaldığı yerden sürdür.
@@ -1228,7 +1231,7 @@ const APOLOGY = /özür dilerim|görsel(?:ler)?(?:i|in)?\s*(?:açamadım|göreme
 export function cleanReply(out, hasHistory) {
   let t = String(out || '').trim();
   const sentences = t.split(/(?<=[.!?])\s+|\n+/).filter(Boolean);
-  const kept = sentences.filter((x) => !APOLOGY.test(x));
+  const kept = sentences.filter((x) => !APOLOGY.test(x) && !isAutoReply(x));
   if (kept.length !== sentences.length) t = kept.join(' ').trim() || 'Hangi modeli kastettiğinizi yazar mısınız efendim? 😊';
   if (hasHistory) t = t.replace(/^(?:merhaba|selam|iyi günler)[!,.\s]*(?:👋|😊)?\s*/i, '').trim() || t;
   return t;
@@ -1412,19 +1415,34 @@ export async function handleDirectMessage({ userId, text, imageUrl, imageData, n
 // ---------- Yorum ----------
 // Gönderideki ürün(ler)i görselden bulur (aynı gönderi için 6 saat önbellek)
 const postHints = new Map();
-async function identifyPostProducts(mediaId, imageUrl, caption) {
+async function identifyPostProducts(mediaId, imageUrl, caption, videoUrl) {
   const hit = postHints.get(mediaId);
-  if (hit && Date.now() - hit.at < 6 * 3600 * 1000) return hit.items;
-  if (!imageUrl) return [];
+  if (hit && Date.now() - hit.at < (hit.items.length ? 6 * 3600 * 1000 : 10 * 60 * 1000)) return hit.items;
   let items = [];
-  try {
-    const tmp = { messages: [], lastImage: await downloadImage(imageUrl), shown: [] };
+  // Gönderi görselinden (ve videoysa farklı saniyelerden kareler) ürünü bul; kesin eşleşme yoksa boş döner (fiyat uydurulmaz)
+  const tryImage = async (img) => {
+    const tmp = { messages: [], lastImage: img, shown: [] };
     startIdentify(tmp, caption || '');
     const id = await tmp.identify;
-    items = (id?.ranked || [])
-      .filter((r) => r.guven >= 0.5 && r.p.inStock)
-      .slice(0, 3)
-      .map((r) => ({ id: r.p.id, baslik: r.p.title, fiyat_tl: r.p.price, eslesme: r.guven }));
+    const ranked = (id?.ranked || []).filter((r) => r.p.inStock);
+    const best = ranked[0];
+    if (!best) return [];
+    const rival = ranked.find((r) => r.p.modelKey !== best.p.modelKey);
+    const sure = ranked.filter((r) => r.guven >= 0.5).slice(0, 3);
+    if (sure.length) return sure;
+    // orta güven: diğer modellerden net öndeyse (en az 0.10 fark) tek aday kabul edilir
+    if (best.guven >= 0.4 && (!rival || best.guven - rival.guven >= 0.1)) return [best];
+    return [];
+  };
+  const toItems = (list) => list.map((r) => ({ id: r.p.id, baslik: r.p.title, fiyat_tl: r.p.price, eslesme: r.guven }));
+  try {
+    if (imageUrl) items = toItems(await tryImage(await downloadImage(imageUrl)));
+    if (!items.length && videoUrl) {
+      for (const buf of await videoFrames(videoUrl, [1, 3, 6]).catch(() => [])) {
+        items = toItems(await tryImage(await fromBuffer(buf, { maxSide: 1024 })));
+        if (items.length) break;
+      }
+    }
   } catch (e) {
     console.error('[comment] gönderi görseli çözülemedi:', e.message);
   }
@@ -1442,7 +1460,7 @@ export function enforceCommentPrice(reply, commentText, items) {
   if (!PRICE_Q.test(commentText || '')) return r;
   const prices = [...new Set((items || []).map((i) => Math.round(i.fiyat_tl)).filter((n) => n > 0))];
   if (prices.length === 1) return `❤️ ${fmtTl(prices[0])} TL 🎉 ${campLine()} ${dmLine}`;
-  const hasPrice = /\d[\d.]*\s*(tl|₺)/i.test(r) && !/arası|ile .* arası|-\s*\d/i.test(r);
+  const hasPrice = /\d[\d.]*\s*(tl|₺)/i.test(r) && !/arası|ile .* arası|-\s*\d|başlıyor|başlayan|başlar|itibaren|civarı|yaklaşık|ve üzeri|\d['’]?(?:den|dan|ten|tan)\b/i.test(r);
   if (!hasPrice) return `❤️ Hangi model için fiyat öğrenmek istediğinizi DM'den iletirseniz hemen net fiyatı verelim 📩 ${campLine()}`;
   let out = r;
   if (!/indirim/i.test(out)) out += ` ${campLine()}`;
@@ -1450,18 +1468,18 @@ export function enforceCommentPrice(reply, commentText, items) {
   return out;
 }
 
-export async function handleComment({ userId, username, commentText, mediaCaption, mediaId, mediaImageUrl }) {
+export async function handleComment({ userId, username, commentText, mediaCaption, mediaId, mediaImageUrl, mediaVideoUrl }) {
   await catalog.ensureLoaded();
   const session = getSession(userId);
   setUsername(userId, username);
   trimHistory(session.messages);
 
-  const postItems = catalog.isEmpty() ? [] : await identifyPostProducts(mediaId, mediaImageUrl, mediaCaption);
+  const postItems = catalog.isEmpty() ? [] : await identifyPostProducts(mediaId, mediaImageUrl, mediaCaption, mediaVideoUrl);
   const prompt = `[GÖNDERİ YORUMU] @${username || 'müşteri'} gönderi altına şunu yazdı: "${commentText}"
 ${mediaCaption ? `Yorum yapılan gönderinin açıklaması: "${mediaCaption.slice(0, 500)}" (hangi ürün/model olduğunu buradan ve search_products ile anlayabilirsin)\n` : ''}${postItems.length ? `Gönderideki ürün(ler) (görselden katalogla eşleşti, güncel fiyatlarıyla): ${JSON.stringify(postItems)}\n` : ''}
 Görevin: yorum için iki çıktı üret. Yalnızca JSON döndür:
 {"public_reply":"...", "dm":"..."}
-- public_reply: herkese açık, 1-3 kısa cümle, sıcak ve satışa yönlendiren. Yorumdaki soruyu kısaca cevapla. Yazım hatalarını (fiat/fyat/fıyat = fiyat vb.) sessizce anla; yazım hakkında asla yorum yapma, espri yapma, doğrudan ve kibarca cevap ver. FİYAT SORULURSA: ürün ADINI YAZMA; sadece sorulan ürünün NET fiyatını yaz, ardından "2 ürün alırsanız ${cfg.campaignDiscount} TL indirim 🎁 Dilediğiniz modelleri seçebilirsiniz." ve en sonda yardımcı olmamız için DM atmalarını iste. Örnek: "❤️ 1.199 TL 🎉 2 ürün alırsanız ${cfg.campaignDiscount} TL indirim 🎁 Dilediğiniz modelleri seçebilirsiniz. Yardımcı olmamız için bize DM'den yazabilirsiniz 📩". Modeli yukarıdaki gönderi ürünlerinden, yorumdan veya search_products sonucundan belirle; fiyatı yalnızca araç/ürün bilgisindeki fiyat_tl'den al. ASLA fiyat aralığı veya genel ürün fiyatları verme. Modeli gerçekten belirleyemezsen (örn. gönderide farklı fiyatlı birden çok ürün var) aralık verme: "Hangi model için fiyat öğrenmek istediğinizi DM'den iletirseniz hemen net fiyat verelim" de. Başlangıç/bitişte ❤️ gibi bir emoji kullan.
+- public_reply: herkese açık, 1-3 kısa cümle, sıcak ve satışa yönlendiren. Yorumdaki soruyu kısaca cevapla. Yazım hatalarını (fiat/fyat/fıyat = fiyat vb.) sessizce anla; yazım hakkında asla yorum yapma, espri yapma, doğrudan ve kibarca cevap ver. FİYAT SORULURSA: ürün ADINI YAZMA; sadece sorulan ürünün NET fiyatını yaz, ardından "2 ürün alırsanız ${cfg.campaignDiscount} TL indirim 🎁 Dilediğiniz modelleri seçebilirsiniz." ve en sonda yardımcı olmamız için DM atmalarını iste. Örnek: "❤️ 1.199 TL 🎉 2 ürün alırsanız ${cfg.campaignDiscount} TL indirim 🎁 Dilediğiniz modelleri seçebilirsiniz. Yardımcı olmamız için bize DM'den yazabilirsiniz 📩". Modeli yukarıdaki gönderi ürünlerinden, yorumdan veya search_products sonucundan belirle; fiyatı yalnızca araç/ürün bilgisindeki fiyat_tl'den al. ASLA fiyat aralığı, "X TL'den başlayan", "yaklaşık" gibi genel fiyat verme: yalnızca NET tek fiyat. Modeli gerçekten belirleyemezsen (örn. gönderide farklı fiyatlı birden çok ürün var) aralık verme: "Hangi model için fiyat öğrenmek istediğinizi DM'den iletirseniz hemen net fiyat verelim" de. Başlangıç/bitişte ❤️ gibi bir emoji kullan.
 - dm: yoruma özel mesaj (yoruma cevap + araçla doğrulanmış ürün/fiyat bilgisi + numara/beden sorusuyla bitir). 600 karakteri geçmesin, görsel gönderemezsin.
 - Yorum sadece emoji/övgü/etiketleme ise: public_reply kısa içten teşekkür (+ DM daveti), dm boş string "" olsun.
 - Yorum küfür/spam/reklam ise ikisini de boş string yap.`;

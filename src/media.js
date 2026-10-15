@@ -64,6 +64,35 @@ export async function frameFromVideo(buf) {
   }
 }
 
+// Videodan birkaç farklı saniyeden kare çıkarır (ürün ilk karede görünmeyebilir); çıkarılamayanlar atlanır
+export async function framesFromVideo(buf, secs = [1, 3, 6]) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vids-'));
+  const inp = path.join(dir, 'in.mp4');
+  const bin = await ffmpegPath();
+  const frames = [];
+  try {
+    fs.writeFileSync(inp, buf);
+    for (const sec of secs) {
+      const out = path.join(dir, `f${sec}.jpg`);
+      await new Promise((resolve) => {
+        const p = spawn(bin, ['-y', '-ss', String(sec), '-i', inp, '-frames:v', '1', '-q:v', '3', out], { stdio: 'ignore' });
+        const t = setTimeout(() => p.kill('SIGKILL'), 20000);
+        p.on('error', () => resolve());
+        p.on('close', () => { clearTimeout(t); resolve(); });
+      });
+      if (fs.existsSync(out)) frames.push(fs.readFileSync(out));
+    }
+    return frames;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+export async function videoFrames(url, secs) {
+  const { buf } = await download(url);
+  return framesFromVideo(buf, secs);
+}
+
 async function imageFromUrl(url) {
   const { buf, type } = await download(url);
   if (type.startsWith('image/')) return buf;

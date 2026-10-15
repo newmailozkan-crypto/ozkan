@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { cfg } from './config.js';
+import { cfg, isAutoReply } from './config.js';
 
 // Kalıcı sohbet kaydı: SON 30 müşterinin sohbeti diskte tutulur (kim, ne konuştu).
 // Her müşteri için son 30 mesaj tam, daha eskileri kısa satırlar (older) olarak saklanır.
@@ -11,7 +11,11 @@ const MAX_OLDER = 60;
 
 const db = new Map(); // id -> {name, at, fullAt, older:[], msgs:[{r,t,at,m}]}
 try {
-  for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(cfg.convFile, 'utf8')))) db.set(k, v);
+  for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(cfg.convFile, 'utf8')))) {
+    v.msgs = (v.msgs || []).filter((m) => !isAutoReply(m.t));
+    v.older = (v.older || []).filter((l) => !isAutoReply(l));
+    db.set(k, v);
+  }
   console.log(`[sohbet] ${db.size} müşterinin sohbet kaydı diskten yüklendi`);
 } catch {
   /* dosya yok */
@@ -66,6 +70,7 @@ export function setName(id, name) {
 
 // role: 'u' müşteri, 'a' bot, 'h' insan yetkili
 export function add(id, role, text, media = false, at = Date.now()) {
+  if (isAutoReply(text)) return; // sahibin otomatik karşılama mesajı kayda/hafızaya girmez
   const tx = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 400);
   if (!tx && !media) return;
   const e = entry(id);
@@ -84,7 +89,7 @@ export function add(id, role, text, media = false, at = Date.now()) {
 // Instagram'dan okunan TÜM sohbetle kaydı yeniden kurar (en eski -> en yeni)
 export function seed(id, history) {
   const e = entry(id);
-  const rows = (history || []).map((h) => ({
+  const rows = (history || []).filter((h) => !isAutoReply(h.text)).map((h) => ({
     r: h.role === 'assistant' ? (/\[Mağaza yetkilisi/.test(h.text || '') ? 'h' : 'a') : 'u',
     t: String(h.text || '').replace(/\s+/g, ' ').trim().slice(0, 400),
     at: h.at || 0,

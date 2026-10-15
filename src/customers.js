@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { cfg } from './config.js';
+import { cfg, isAutoReply } from './config.js';
 import * as convlog from './convlog.js';
 
 // Müşteri hafızası: siparişler, yorumlar, memnuniyet fotoğrafı. Dosyaya yazılır; yeniden başlatmada geri yüklenir.
@@ -172,7 +172,7 @@ export const recent = (userId) => get(userId)?.recent || [];
 // ---------- ekibin gerçek cevaplarından öğrenme ----------
 let learned = [];
 try {
-  learned = JSON.parse(fs.readFileSync(cfg.learnedFile, 'utf8'));
+  learned = JSON.parse(fs.readFileSync(cfg.learnedFile, 'utf8')).filter((x) => !isAutoReply(x?.a));
 } catch {
   /* dosya yok */
 }
@@ -182,7 +182,7 @@ const scrub = (t) => String(t || '').replace(/\d[\d\s().-]{6,}\d/g, '…').slice
 export function addLearned(q, a) {
   const Q = scrub(q);
   const A = scrub(a);
-  if (!Q || !A || A.length < 8) return;
+  if (!Q || !A || A.length < 8 || isAutoReply(A)) return; // otomatik karşılama mesajı öğrenilmez
   learned.push({ q: Q, a: A, ts: Date.now() });
   if (learned.length > 60) learned.shift();
   clearTimeout(learnTimer);

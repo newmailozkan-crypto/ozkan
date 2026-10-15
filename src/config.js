@@ -105,3 +105,12 @@ export function checkConfig() {
   if (!cfg.appSecret) console.warn('[config] IG_APP_SECRET yok: webhook imza doğrulaması KAPALI.');
   return missing;
 }
+
+// Mağaza sahibinin kendi otomatik karşılama mesajları (Instagram otomatik yanıt/kayıtlı yanıt): bot bunları insan yazışması saymaz,
+// öğrenmez, hafızasına almaz ve müşteriye asla göndermez. Ek kalıplar için AUTO_REPLY_PATTERNS (virgülle ayrılmış metin parçaları).
+const AUTO_DEFAULT = [/ürünlerimizi incelemek ve sipariş vermek için/i, /profilimizde bulunan web sitemizi/i, /web sitemizi ziyaret edin/i];
+const AUTO_EXTRA = String(process.env.AUTO_REPLY_PATTERNS || '').split(',').map((x) => x.trim().toLocaleLowerCase('tr')).filter(Boolean);
+export const isAutoReply = (t) => {
+  const x = String(t || '');
+  return AUTO_DEFAULT.some((re) => re.test(x)) || AUTO_EXTRA.some((e) => x.toLocaleLowerCase('tr').includes(e));
+};

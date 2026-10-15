@@ -1,6 +1,6 @@
 import express from 'express';
 import crypto from 'node:crypto';
-import { cfg, checkConfig, dataDir } from './src/config.js';
+import { cfg, checkConfig, dataDir, isAutoReply } from './src/config.js';
 import * as ig from './src/instagram.js';
 import { usageReport } from './src/claude.js';
 import { startCatalogRefresh, catalogStatus, debugFeed, debugSearch, debugFamilies, debugStatus, allProducts, BOT_VERSION, pushFeed, pushJson, pushState } from './src/catalog.js';
@@ -184,6 +184,7 @@ function handleEcho(event) {
     const hasAtt = (msg.attachments || []).length > 0;
     if (ig.isOurMessage(customerId, msg.mid, msg.text, hasAtt)) return; // botun kendi mesajı
     const text = msg.text || (hasAtt ? '[görsel/ek gönderdi]' : '');
+    if (isAutoReply(text)) { recordEvent('otomatik_karsilama_yoksayildi', { musteri: customerId }); return; } // sahibin otomatik karşılama mesajı: insan yazışması sayılmaz
     humanMessage(String(customerId), text);
     recordEvent('insan_mesaji', { musteri: customerId, metin: String(text).slice(0, 80), bot_sessiz_saat: cfg.handoffHours });
     console.log('[devir] insan yazdı, bot sessiz ve izlemede:', customerId);
@@ -432,7 +433,8 @@ async function processComment(change) {
     try {
       const media = v.media?.id ? await ig.getMedia(v.media.id) : {};
       const mediaImageUrl = media.thumbnail_url || (media.media_type && media.media_type !== 'VIDEO' ? media.media_url : null);
-      const { publicReply, dm } = await handleComment({ userId: from.id, username: from.username, commentText: v.text, mediaCaption: media.caption, mediaId: v.media?.id, mediaImageUrl });
+      const mediaVideoUrl = media.media_type === 'VIDEO' ? media.media_url : null;
+      const { publicReply, dm } = await handleComment({ userId: from.id, username: from.username, commentText: v.text, mediaCaption: media.caption, mediaId: v.media?.id, mediaImageUrl, mediaVideoUrl });
       const result = { id: commentId, kimden: from.username || from.id };
       if (publicReply) {
         await ig.replyToComment(commentId, publicReply);
