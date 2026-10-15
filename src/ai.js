@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { cfg } from './config.js';
 import * as catalog from './catalog.js';
 import { siteInfoText } from './siteInfo.js';
-import { storeRulesText, priceCart } from './storeRules.js';
+import { storeRulesText, priceCart, campaignShort } from './storeRules.js';
 import { sendTelegram, sendTelegramPhoto, formatOrder, formatCancel, notifyHuman } from './telegram.js';
 import * as customers from './customers.js';
 import { create } from './claude.js';
@@ -158,7 +158,7 @@ function staticPrompt() {
 ## ÜSLUP (çok önemli)
 - Mesajların ÇOK KISA olsun: en fazla 2 kısa cümle (yaklaşık 150 karakter). Gereksiz bilgi YOK: malzeme/özellik/kargo/ödeme anlatma (müşteri sormadıkça), "size yardımcı olmaktan memnuniyet duyarım" gibi dolgu cümleler, aynı bilgiyi tekrar yazma, madde listesi, uzun paragraf yok. Sadece sorulana cevap ver + tek kısa adım.
 - CEVAP VERMEDEN ÖNCE "KONUŞMA HAFIZASI" bölümünü ve sohbeti BAŞTAN SONA oku, sohbetin akışına göre devam et. Müşterinin daha önce söylediğini (model, numara, renk, adres, sorduğu ürünler) tekrar sorma. Önceki mesajını görmezden gelme; müşteri bir şey sorduysa önce onu cevapla.
-- ÜRÜN SORULUNCA: sadece ürünün olup olmadığını ve fiyatını (fiyat_tl) söyle. Fiyat yazdığın HER mesajda aynı mesajda mutlaka şunu da yaz: "2. ürün sadece ${cfg.campaignPrice} TL 🎁 İkinci ürünü dilediğiniz modelden seçebilirsiniz." (sipariş özetinde tekrar yazma). Ardından tek kısa soru (numara?).
+- ÜRÜN SORULUNCA: sadece ürünün olup olmadığını ve fiyatını (fiyat_tl) söyle. Fiyat yazdığın HER mesajda aynı mesajda mutlaka şunu da yaz: "${campaignShort()}" (sipariş özetinde tekrar yazma). Ardından tek kısa soru (numara?).
 - ANLAŞILMAZSA: müşterinin ne demek istediğini anlamazsan "anlamadım" DEME; en güçlü tahminini kısa soruyla teyit et: "X modeli mi demek istediniz efendim?" / "... mı kastediyorsunuz?". Tek soru sor.
 - ASLA "özür dilerim", "görseli açamadım", "net gelmedi" deme. Sohbet sürüyorsa tekrar "Merhaba!" diye selam verme; doğrudan konuya gir. Müşteri art arda birden çok ürün/gönderi attıysa her birini ayrı ayrı, sırayla cevapla.
 - Mesaj sonunda satışı ilerleten TEK kısa soru/adım. Ölçülü emoji (😊).
@@ -189,7 +189,7 @@ function staticPrompt() {
    Metinle ürün söylenirse search_products, sonra find_alternatives aynı mantıkla. Sadece araçtan dönen ürünleri öner.
    Müşteri "3'lü alımda fiyat nedir / 2 tane alırsam" gibi çoklu alım fiyatı sorarsa: ürünü belirle (paylaşılan hikaye/gönderi/fotoğraf dahil), calc_cart ile o adet için tutarı hesapla ve kısaca söyle (ürün birim fiyatı, kampanya indirimi, kargo, ödenecek toplam), ardından numarasını sor.
 2. Numarasını erken öğren; sadece numarası stokta olanları öner. Numara öğrenilip stok bakılınca (find_alternatives/match_customer_image size ile) hangi renklerde o numaranın olduğunu söyle.
-2b. KAMPANYA TANITIMI (numara stokta çıkınca, sipariş bilgisi istemeden ÖNCE): offer_campaign çağır ve FOTOĞRAFSIZ şunu vurgula: "Ayrıca kampanyamız var 🎁 Seçeceğiniz 2. ürün sadece ${cfg.campaignPrice} TL! İkinci ürünü modellerimizin hepsinden dilediğiniz gibi seçebilirsiniz. İsterseniz numaranıza uygun modelleri önereyim mi?" Cevabı bekle. "Evet" derse suggest_upsell ile 4-5 modeli (stokta, müşterinin numarasında) gönder, "Hangisini beğendiniz?" diye sor; ikna et (kalıp, şeffaf kargo, kapıda ödeme, hızlı değişim). Beğenmezse tekrar suggest_upsell. "Hayır" derse ısrar etme, sipariş bilgilerine geç.
+2b. KAMPANYA TANITIMI (numara stokta çıkınca, sipariş bilgisi istemeden ÖNCE): offer_campaign çağır ve FOTOĞRAFSIZ şunu vurgula: "Ayrıca kampanyamız var 🎁 2 ürün alırsanız ${cfg.campaignDiscount} TL indirim (4 ürüne ${cfg.campaignDiscount*2} TL, 6 ürüne ${cfg.campaignDiscount*3} TL)! Ürünleri modellerimizin hepsinden dilediğiniz gibi seçebilirsiniz. İsterseniz numaranıza uygun modelleri önereyim mi?" Cevabı bekle. "Evet" derse suggest_upsell ile 4-5 modeli (stokta, müşterinin numarasında) gönder, "Hangisini beğendiniz?" diye sor; ikna et (kalıp, şeffaf kargo, kapıda ödeme, hızlı değişim). Beğenmezse tekrar suggest_upsell. "Hayır" derse ısrar etme, sipariş bilgilerine geç.
 3. Buçuklu numara isterse bir üst tam numarayı öner. Siparişten önce her ürünün kalıbını (kalip_notu) kısaca söyle.
 4. Müşteri almaya karar verince bilgileri TEK mesajla, şu biçimde iste:
    "Siparişiniz için bilgileriniz 😊
@@ -199,12 +199,12 @@ function staticPrompt() {
    • İl, ilçe"
    Eksik gelirse yalnızca eksiği sor. Adreste MAHALLE, CADDE/SOKAK, KAPI NO zorunlu; apartmansa DAİRE NO da zorunlu (kapı no verip daire no vermezse daireyi sor). Müşteri "iş yeri/müstakil/dükkan" derse daire sorma, daire_yok=true ile sorunsuz devam et. Müşteri iş yeri adı gibi bilinen bir yer söylerse adres_notu olarak ekle (adresin sonuna parantezle yazılır).
 5. Sepette ZATEN 2 veya daha fazla ürün varsa müşteri kampanyadan yararlanıyor demektir: ASLA "bir ürün daha eklemek ister misiniz / kampanyamız var" deme, kampanyayı tekrar sunma. Doğrudan özet yaz, müşteri "onaylıyorum/evet" deyince HEMEN submit_order çağır (tekrar onay isteme, tek onay yeter). Bilgiler tamamlanınca: kampanya adım 2b'de ZATEN sunulduysa tekrar sunma, doğrudan adım 6'ya geç (müşteri 2. ürün seçtiyse calc_cart yap). Sunulmadıysa UPSELL (iki adım): hemen siparişi bitirme.
-   a) Önce offer_campaign çağır ve FOTOĞRAFSIZ, kısa şunu sor: "Siparişiniz hazır 😊 Kampanyamız var: 2. ürün sadece ${cfg.campaignPrice} TL! 🎁 İkinci bir ürün alırsanız sepetinizdeki en uygun fiyatlı ürün ${cfg.campaignPrice} TL olur (aynı siparişte). Bir ürün daha eklemek ister misiniz?" Cevabı BEKLE (sistem, cevap gelmeden siparişi engeller).
+   a) Önce offer_campaign çağır ve FOTOĞRAFSIZ, kısa şunu sor: "Siparişiniz hazır 😊 Kampanyamız var: 2. ürünü de alırsanız toplamda ${cfg.campaignDiscount} TL indirim kazanıyorsunuz! 🎁 (aynı siparişte; 4 ürüne ${cfg.campaignDiscount*2} TL, 6 ürüne ${cfg.campaignDiscount*3} TL). Bir ürün daha eklemek ister misiniz?" Cevabı BEKLE (sistem, cevap gelmeden siparişi engeller).
    b) Müşteri "evet/olur/bir tane daha alabilirim" derse suggest_upsell çağır (müşterinin numarasında stokta olan, tarzına uygun 4-5 model fotoğraflı gider) ve "Hangisini beğendiniz?" diye sor. Beğenmezse suggest_upsell'i tekrar çağır (daha önce gösterilenler otomatik hariç tutulur, 4-5 yeni model). İstemezse ısrar etme, sipariş özetine geç.
-   Ekleme olursa calc_cart; tek sayıdaysa bir sonraki çifte (3→4, 5→6), sepet ${cfg.freeShippingMin.toLocaleString('tr-TR')} TL altındaysa ücretsiz kargo için ek ürüne teşvik et (calc_cart ipuçları). Hangi ürünün ${cfg.campaignPrice} TL olduğunu calc_cart sonucuna göre söyle (en ucuz ürün).
+   Ekleme olursa calc_cart; tek sayıdaysa bir sonraki çifte (3→4, 5→6), sepet ${cfg.freeShippingMin.toLocaleString('tr-TR')} TL altındaysa ücretsiz kargo için ek ürüne teşvik et (calc_cart ipuçları). Kazanılan indirimi calc_cart sonucuna göre söyle.
 6. Kısa sipariş özeti (ürün, numara, indirim, kargo, ödenecek toplam, adres, kapıda ödeme) yaz ve TEK KEZ onay iste. Müşteri onay verince (evet/onaylıyorum/tamam/olur) aynı turda HEMEN submit_order çağır; ikinci kez onay isteme, özeti tekrarlama, kampanya/ek ürün teklifi yapma (bir sipariş için bir kez submit_order). submit_order sonucu ok:true dönmeden ASLA "siparişiniz alındı / sisteme kaydedildi / paketlenecek" deme; ok:false dönerse nedenine göre düzelt (ürün id'sini search_products ile bul, eksik bilgiyi iste) ve tekrar dene; müşteriye sipariş alındı yalanı söyleme.
 7. Sipariş alınınca: teşekkür, 24 saatte paketlenip SMS ile bilgi verileceği, kapıda ödeme + şeffaf kargo, ürünü teslim alınca memnuniyet fotoğrafı beklediğimiz (📸). Hepsi 3-4 kısa cümlede.
-- Kampanya (2. ürün ${cfg.campaignPrice} TL) yalnızca TEK siparişte birlikte alınan ürünlere uygulanır. Eski "2'li alımda 300 TL, 4'lü alımda 600 TL indirim" kampanyası İPTAL edildi, asla bahsetme. Müşteri ayrı ayrı sipariş verirse kampanya birleşmez; kampanya için ürünlerin aynı siparişte olması gerektiğini söyle (önceki sipariş 3 saat içindeyse isterse iptal edip hepsini tek siparişte toplayabileceğini belirt).
+- Kampanya (2 ürün ${cfg.campaignDiscount} TL, 4 ürün ${cfg.campaignDiscount*2} TL, 6 ürün ${cfg.campaignDiscount*3} TL indirim) yalnızca TEK siparişte birlikte alınan ürünlere uygulanır. Eski "2. ürün 599 TL" ve "300/600 TL indirim" kampanyaları İPTAL edildi, asla bahsetme. SİPARİŞ TAMAMLANMADAN ÖNCE müşteriye mutlaka 2. ürün indirimini hatırlat ve en az 2 ürün satmaya çalış. Müşteri ayrı ayrı sipariş verirse kampanya birleşmez; kampanya için ürünlerin aynı siparişte olması gerektiğini söyle (önceki sipariş 3 saat içindeyse isterse iptal edip hepsini tek siparişte toplayabileceğini belirt).
 
 ## SİPARİŞ SONRASI
 - Sipariş vermiş müşterinin bilgileri hafızada görünür; sonradan soru sorsa siparişini bilerek cevap ver, aynı bilgileri tekrar isteme.
@@ -277,7 +277,7 @@ const TOOLS = [
   },
   {
     name: 'offer_campaign',
-    description: `Sipariş bilgileri tamamlanınca ÇAPRAZ SATIŞ ilk adımı: kampanyayı (2. ürün ${cfg.campaignPrice} TL: sepetteki en ucuz ürün ${cfg.campaignPrice} TL olur; 4 üründe en ucuz 2, 6 üründe en ucuz 3 ürün) müşteriye sunmadan önce çağır. Fotoğraf göndermez. Sonra kısa kampanya sorusunu yaz ("numaranıza uygun modelleri önereyim mi?") ve cevabı bekle.`,
+    description: `Sipariş bilgileri tamamlanınca ÇAPRAZ SATIŞ ilk adımı: kampanyayı (2 ürün alımında ${cfg.campaignDiscount} TL indirim, 4 üründe ${cfg.campaignDiscount*2} TL, 6 üründe ${cfg.campaignDiscount*3} TL) müşteriye sunmadan önce çağır. Fotoğraf göndermez. Sonra kısa kampanya sorusunu yaz ("numaranıza uygun modelleri önereyim mi?") ve cevabı bekle.`,
     input_schema: { type: 'object', properties: {} },
   },
   {
@@ -304,7 +304,7 @@ const TOOLS = [
   },
   {
     name: 'calc_cart',
-    description: `Sepet tutarını hesaplar: kampanya (2. ürün ${cfg.campaignPrice} TL: her 2 üründe sepetteki en ucuz ürün ${cfg.campaignPrice} TL olur), kargo ücreti (${cfg.freeShippingMin} TL altı ${cfg.shippingFee} TL) ve ödenecek toplam. Ürün sayısı/sepet değiştikçe ve sipariş özetinden önce MUTLAKA kullan; ipuçlarına göre bir sonraki ürüne veya ücretsiz kargoya teşvik et.`,
+    description: `Sepet tutarını hesaplar: kampanya (her 2 üründe ${cfg.campaignDiscount} TL indirim: 2 ürün ${cfg.campaignDiscount}, 4 ürün ${cfg.campaignDiscount*2}, 6 ürün ${cfg.campaignDiscount*3} TL), kargo ücreti (${cfg.freeShippingMin} TL altı ${cfg.shippingFee} TL) ve ödenecek toplam. Ürün sayısı/sepet değiştikçe ve sipariş özetinden önce MUTLAKA kullan; ipuçlarına göre bir sonraki ürüne veya ücretsiz kargoya teşvik et.`,
     input_schema: {
       type: 'object',
       properties: {
@@ -760,7 +760,7 @@ async function submitOrder(session, userId, a) {
     return {
       ok: false,
       hatalar: ['UPSELL_YAPILMADI'],
-      not: 'SİPARİŞ HENÜZ KAYDEDİLMEDİ, müşteriye "siparişiniz alındı/kayda geçti" DEME. Sipariş henüz tamamlanamaz: önce offer_campaign çağır, "2. ürün ' + cfg.campaignPrice + ' TL" kampanyasını kısaca sunup "Bir ürün daha eklemek ister misiniz?" diye sor ve müşterinin cevabını bekle. Bu mesajda sipariş özeti yazma, siparişi tamamlama.',
+      not: 'SİPARİŞ HENÜZ KAYDEDİLMEDİ, müşteriye "siparişiniz alındı/kayda geçti" DEME. Sipariş henüz tamamlanamaz: önce offer_campaign çağır, "2 ürün alımında ' + cfg.campaignDiscount + ' TL indirim" kampanyasını kısaca hatırlatıp "Bir ürün daha eklemek ister misiniz?" diye sor ve müşterinin cevabını bekle. Bu mesajda sipariş özeti yazma, siparişi tamamlama.',
     };
   }
   const errors = [];
@@ -799,7 +799,7 @@ async function submitOrder(session, userId, a) {
   const priced = priceCart(unitPrices);
   const discount = priced.indirim_tl;
   const shipping = priced.kargo_ucreti_tl;
-  const campaignNote = discount ? `${totalQty} ürün: en ucuz ${priced.kampanyali_urun_adedi} ürün ${cfg.campaignPrice} TL` : '';
+  const campaignNote = discount ? `${totalQty} ürün alımında ${discount} TL indirim` : '';
   const total = priced.odenecek_toplam_tl;
 
   const hash = crypto.createHash('sha1').update(JSON.stringify([userId, phone, items.map((i) => [i.id, i.size, i.qty])])).digest('hex');
@@ -997,7 +997,7 @@ async function runTool(name, input, ctx) {
       return findAlternatives(session, send, input.product_id, input.size);
     case 'offer_campaign': {
       session.upsellTurn = session.turn; // sipariş ancak müşteri bu tekliften sonra bir mesaj yazarsa tamamlanır
-      return { ok: true, not: 'Fotoğraf GÖNDERME. Kısaca kampanyayı sun: 2. ürün sadece ' + cfg.campaignPrice + ' TL (aynı siparişte; modellerin hepsinden dilediğini seçebilir; 4 üründe en ucuz 2, 6 üründe en ucuz 3 ürün). Avantajı vurgula ve "İsterseniz numaranıza uygun modelleri önereyim mi?" diye sor. Cevabı bekle.' };
+      return { ok: true, not: 'Fotoğraf GÖNDERME. Kısaca kampanyayı sun: 2 ürün alımında ' + cfg.campaignDiscount + ' TL indirim (aynı siparişte; modellerin hepsinden dilediğini seçebilir; 4 ürüne ' + cfg.campaignDiscount * 2 + ', 6 ürüne ' + cfg.campaignDiscount * 3 + ' TL). Avantajı vurgula ve "İsterseniz numaranıza uygun modelleri önereyim mi?" diye sor. Cevabı bekle.' };
     }
     case 'suggest_upsell': {
       session.upsellTurn = session.turn; // sipariş ancak müşteri bu tekliften sonra bir mesaj yazarsa tamamlanır
@@ -1220,7 +1220,7 @@ async function createSafe(session, params, tag) {
   }
 }
 
-// Fiyat söylenen HER mesajda "2. ürün 599 TL, dilediğiniz modelden seçebilirsiniz" bilgisi mutlaka bulunur (sipariş özeti/adres isteme mesajlarında eklenmez)
+// Fiyat söylenen HER mesajda "2 ürün alırsanız 400 TL indirim" bilgisi mutlaka bulunur (sipariş özeti/adres isteme mesajlarında eklenmez)
 const PRICE_IN_TEXT = /\d[\d.]*\s*(tl|₺|lira)/i;
 const SKIP_CAMPAIGN = /sipariş(iniz)?\s*özet|ödenecek\s*toplam|isim soyisim|mahalle|kapı no|iptal|ücretsiz kargo baremimiz|whatsapp/i;
 // Müşteriye giden metinden özür/"görseli açamadım" cümlelerini ve sürmekte olan sohbette tekrar selamı temizler
@@ -1237,8 +1237,8 @@ export function cleanReply(out, hasHistory) {
 export function ensureCampaignLine(out) {
   const t = String(out || '');
   if (!PRICE_IN_TEXT.test(t) || SKIP_CAMPAIGN.test(t)) return t;
-  if (new RegExp(`${cfg.campaignPrice}\\s*(tl|₺)`, 'i').test(t) || /2\.\s*ürün/i.test(t)) return t;
-  return `${t.trim()}\n2. ürün sadece ${cfg.campaignPrice} TL 🎁 İkinci ürünü dilediğiniz modelden seçebilirsiniz.`;
+  if (/indirim/i.test(t)) return t;
+  return `${t.trim()}\n${campaignShort()}`;
 }
 
 async function agentLoop({ session, userId, send, tools }) {
@@ -1434,9 +1434,9 @@ async function identifyPostProducts(mediaId, imageUrl, caption) {
 
 const PRICE_Q = /fiyat|fıyat|fyat|fiat|fiyad|fıat|kaç\s*(tl|lira|para|₺)|kaça|ne\s*kadar|ücret|ucret|kac\s*(tl|para)|\bkaç\b|\bkac\b|\bfyt\b|\bfiyatı\b/i;
 const fmtTl = (n) => Number(n).toLocaleString('tr-TR');
-// Fiyat sorulduysa herkese açık cevap: ürün ADI YOK, sadece fiyat + "2. ürün 599 TL" + DM daveti
+// Fiyat sorulduysa herkese açık cevap: ürün ADI YOK, sadece fiyat + "2 ürün alırsanız 400 TL indirim" + DM daveti
 const dmLine = 'Yardımcı olmamız için bize DM\'den yazabilirsiniz 📩';
-const campLine = () => `2. ürün sadece ${cfg.campaignPrice} TL 🎁 Dilediğiniz modelden seçebilirsiniz.`;
+const campLine = () => `2 ürün alırsanız ${cfg.campaignDiscount} TL indirim 🎁 Dilediğiniz modelleri seçebilirsiniz.`;
 export function enforceCommentPrice(reply, commentText, items) {
   const r = String(reply || '').trim();
   if (!PRICE_Q.test(commentText || '')) return r;
@@ -1445,7 +1445,7 @@ export function enforceCommentPrice(reply, commentText, items) {
   const hasPrice = /\d[\d.]*\s*(tl|₺)/i.test(r) && !/arası|ile .* arası|-\s*\d/i.test(r);
   if (!hasPrice) return `❤️ Hangi model için fiyat öğrenmek istediğinizi DM'den iletirseniz hemen net fiyatı verelim 📩 ${campLine()}`;
   let out = r;
-  if (!new RegExp(`${cfg.campaignPrice}\\s*(tl|₺)`, 'i').test(out)) out += ` ${campLine()}`;
+  if (!/indirim/i.test(out)) out += ` ${campLine()}`;
   if (!/\bDM\b/i.test(out)) out += ` ${dmLine}`;
   return out;
 }
@@ -1461,7 +1461,7 @@ export async function handleComment({ userId, username, commentText, mediaCaptio
 ${mediaCaption ? `Yorum yapılan gönderinin açıklaması: "${mediaCaption.slice(0, 500)}" (hangi ürün/model olduğunu buradan ve search_products ile anlayabilirsin)\n` : ''}${postItems.length ? `Gönderideki ürün(ler) (görselden katalogla eşleşti, güncel fiyatlarıyla): ${JSON.stringify(postItems)}\n` : ''}
 Görevin: yorum için iki çıktı üret. Yalnızca JSON döndür:
 {"public_reply":"...", "dm":"..."}
-- public_reply: herkese açık, 1-3 kısa cümle, sıcak ve satışa yönlendiren. Yorumdaki soruyu kısaca cevapla. Yazım hatalarını (fiat/fyat/fıyat = fiyat vb.) sessizce anla; yazım hakkında asla yorum yapma, espri yapma, doğrudan ve kibarca cevap ver. FİYAT SORULURSA: ürün ADINI YAZMA; sadece sorulan ürünün NET fiyatını yaz, ardından "2. ürün sadece ${cfg.campaignPrice} TL 🎁 Dilediğiniz modelden seçebilirsiniz." ve en sonda yardımcı olmamız için DM atmalarını iste. Örnek: "❤️ 1.199 TL 🎉 2. ürün sadece ${cfg.campaignPrice} TL 🎁 Dilediğiniz modelden seçebilirsiniz. Yardımcı olmamız için bize DM'den yazabilirsiniz 📩". Modeli yukarıdaki gönderi ürünlerinden, yorumdan veya search_products sonucundan belirle; fiyatı yalnızca araç/ürün bilgisindeki fiyat_tl'den al. ASLA fiyat aralığı veya genel ürün fiyatları verme. Modeli gerçekten belirleyemezsen (örn. gönderide farklı fiyatlı birden çok ürün var) aralık verme: "Hangi model için fiyat öğrenmek istediğinizi DM'den iletirseniz hemen net fiyat verelim" de. Başlangıç/bitişte ❤️ gibi bir emoji kullan.
+- public_reply: herkese açık, 1-3 kısa cümle, sıcak ve satışa yönlendiren. Yorumdaki soruyu kısaca cevapla. Yazım hatalarını (fiat/fyat/fıyat = fiyat vb.) sessizce anla; yazım hakkında asla yorum yapma, espri yapma, doğrudan ve kibarca cevap ver. FİYAT SORULURSA: ürün ADINI YAZMA; sadece sorulan ürünün NET fiyatını yaz, ardından "2 ürün alırsanız ${cfg.campaignDiscount} TL indirim 🎁 Dilediğiniz modelleri seçebilirsiniz." ve en sonda yardımcı olmamız için DM atmalarını iste. Örnek: "❤️ 1.199 TL 🎉 2 ürün alırsanız ${cfg.campaignDiscount} TL indirim 🎁 Dilediğiniz modelleri seçebilirsiniz. Yardımcı olmamız için bize DM'den yazabilirsiniz 📩". Modeli yukarıdaki gönderi ürünlerinden, yorumdan veya search_products sonucundan belirle; fiyatı yalnızca araç/ürün bilgisindeki fiyat_tl'den al. ASLA fiyat aralığı veya genel ürün fiyatları verme. Modeli gerçekten belirleyemezsen (örn. gönderide farklı fiyatlı birden çok ürün var) aralık verme: "Hangi model için fiyat öğrenmek istediğinizi DM'den iletirseniz hemen net fiyat verelim" de. Başlangıç/bitişte ❤️ gibi bir emoji kullan.
 - dm: yoruma özel mesaj (yoruma cevap + araçla doğrulanmış ürün/fiyat bilgisi + numara/beden sorusuyla bitir). 600 karakteri geçmesin, görsel gönderemezsin.
 - Yorum sadece emoji/övgü/etiketleme ise: public_reply kısa içten teşekkür (+ DM daveti), dm boş string "" olsun.
 - Yorum küfür/spam/reklam ise ikisini de boş string yap.`;

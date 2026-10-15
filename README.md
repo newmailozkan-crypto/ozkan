@@ -121,7 +121,7 @@ Bellekte şunlar bulunur:
 | `DAILY_ALERT_USD`, `DAILY_CAP_USD` | Günlük tahmini harcama uyarısı (3) ve isteğe bağlı günlük limit (0 = kapalı). Kullanım: `/debug/usage`. |
 | `FOLLOWUP_HOURS`, `BATCH_MS` | Hatırlatma: bizim son mesajımızdan 4 sa sonra müşteri yazmadıysa kaldığı yerden devam eden TEK mesaj (cevap gelmezse bir daha yazılmaz; 0 = kapalı). Mesaj birleştirme bekleme süresi (2500 ms). |
 | `HANDOFF_HOURS`, `LEARNED_FILE`, `CUSTOMERS_FILE`, `CANCEL_WINDOW_HOURS` | (Opsiyonel) Mağaza yetkilisi yazdıktan sonra botun sessiz kalacağı saat (varsayılan 3, 0 = kapalı), ekip cevaplarının/müşteri hafızasının dosya yolları, iptal süresi (3). |
-| `CAMPAIGN_RULES` | (Opsiyonel) Örn. `2:300,3:600` → 2+ üründe 300 TL, 3+ üründe 600 TL. Verilirse indirimi sunucu hesaplar, bot değiştiremez. Verilmezse bot indirimi site bilgisinden okur (en fazla %40 ile sınırlı). |
+| `CAMPAIGN_DISCOUNT`, `CAMPAIGN_STEP_QTY` | (Opsiyonel) Kampanya: her 2 üründe (adet) 400 TL indirim (2 ürün 400, 4 ürün 800, 6 ürün 1.200 TL). İndirimi sunucu hesaplar, bot değiştiremez. |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Sipariş bildirimi |
 
 ## XML formatı hakkında
