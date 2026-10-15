@@ -1460,7 +1460,7 @@ export function enforceCommentPrice(reply, commentText, items) {
   if (!PRICE_Q.test(commentText || '')) return r;
   const prices = [...new Set((items || []).map((i) => Math.round(i.fiyat_tl)).filter((n) => n > 0))];
   if (prices.length === 1) return `❤️ ${fmtTl(prices[0])} TL 🎉 ${campLine()} ${dmLine}`;
-  const hasPrice = /\d[\d.]*\s*(tl|₺)/i.test(r) && !/arası|ile .* arası|-\s*\d|başlıyor|başlayan|başlar|itibaren|civarı|yaklaşık|ve üzeri|\d['’]?(?:den|dan|ten|tan)\b/i.test(r);
+  const hasPrice = /\d[\d.]*\s*(tl|₺)/i.test(r) && !/arası|ile .* arası|-\s*\d|başlıyor|başlayan|başlar|itibaren|civarı|yaklaşık|ve üzeri|(?:\d|tl|₺)\s*['’]?(?:den|dan|ten|tan)\b/i.test(r);
   if (!hasPrice) return `❤️ Hangi model için fiyat öğrenmek istediğinizi DM'den iletirseniz hemen net fiyatı verelim 📩 ${campLine()}`;
   let out = r;
   if (!/indirim/i.test(out)) out += ` ${campLine()}`;
